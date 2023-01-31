@@ -268,15 +268,11 @@ YAMMER_MIDSIZE = Yammer
 
 $FriendlyNameHash = $FriendlyNameArray | ConvertFrom-StringData
 
-#Connect-ExchangeOnline -Credential $globaladmincreds | Out-Null
-#Connect-MsolService -Credential $globaladmincreds | Out-Null
-
 try { Connect-ExchangeOnline } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
 try { Connect-MsolService } catch { write-error "Not connected to MSOL service. Exiting."; exit } 
 
 #define paths
 $datestring = ((get-date).tostring("yyyy-MM-dd"))
-$domains = try { Get-AcceptedDomain -ErrorAction Stop } catch { write-error "Not connected to Exchange Online. This may indicate the credentials have changed."; exit }
 $tenant = (Get-AcceptedDomain | Where-Object { $_.Default }).name
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $tenantpath = "$DesktopPath\365QuickReport\$tenant"
@@ -285,8 +281,10 @@ $XLSreport = "$reportspath\$tenant-report-$datestring.xlsx"
 
 $ResultObject = @()
 $MBUserCount = 0
+$Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
+$MBUserTotal = $($Mailboxes).count
 
-Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" } | ForEach-Object {
+$Mailboxes | ForEach-Object {
     $upn = $_.UserPrincipalName
     $CreationTime = $_.WhenCreated
     $LastLogonTime = (Get-MailboxStatistics -Identity $upn).lastlogontime
@@ -294,7 +292,7 @@ Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Disc
     $MBType = $_.RecipientTypeDetails
     $MBUserCount++
     $RolesAssigned = ""
-    Write-Progress -Activity "`n     Processed mailbox count: $MBUserCount "`n"  Currently Processing: $DisplayName"
+    Write-Progress -Activity "`n     Processed mailbox count: $MBUserCount of $MBUserTotal "`n"  Currently Processing: $DisplayName"
 
     #Retrieve lastlogon time and then calculate Inactive days
     if ($LastLogonTime -eq $null) {
@@ -379,4 +377,5 @@ $ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLo
     -Show
 
 #Clean up session
-Get-PSSession | Remove-PSSession
+Disconnect-ExchangeOnline
+[Microsoft.Online.Administration.Automation.ConnectMsolService]::ClearUserSessionState()
