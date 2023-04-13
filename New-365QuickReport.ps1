@@ -15,14 +15,50 @@
 						If we meet some day, and you think this stuff is worth it, you can buy me a beer in return.
 #>
 
+#I'm eventually going to write a better prereq checker/installer function and use something like this for input.
+$PrerequisitesTable = @'
+Name,Repository,Scope,Version
+Microsoft.Graph,PSGallery,CurrentUser,1.25.0
+ExchangeOnlineManagement,PSGallery,CurrentUser,3.0.0
+ImportExcel,PSGallery,CurrentUser,7.0.0
+'@
+$Prerequisites = $PrerequisitesTable | ConvertFrom-Csv
+$Prerequisites #| Out-GridView
 
 #install the necessary modules if they aren't installed already
+$ProgressActivity = "Checking Prerequisites."
+$ProgressOperation = "Checking for module MSOnline."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 If (!(Get-Module -ListAvailable -Name MSOnline)) { Install-Module MSOnline -scope CurrentUser -Force } 
-If (!(Get-Module -ListAvailable -Name ExchangeOnlineManagement)) { Install-Module ExchangeOnlineManagement -Repository PSGallery -AllowClobber -scope CurrentUser -Force } 
+
+$ProgressOperation = "Checking for module ExchangeOnlineManagement."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+[version] $moduleversion = $(Get-Module -ListAvailable -Name ExchangeOnlineManagement).version
+[version] $minimumversion = "3.0.0"
+If (!($moduleversion)) { 
+    Install-Module ExchangeOnlineManagement -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion
+} elseif ($moduleversion -lt $minimumversion) {
+    Uninstall-Module ExchangeOnlineManagement #this may fail because i haven't checked for admin
+    Install-Module ExchangeOnlineManagement -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion
+}
+
+$ProgressOperation = "Checking for module ImportExcel."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 If (!(Get-Module -ListAvailable -Name ImportExcel)) { Install-Module ImportExcel -scope CurrentUser -Force } 
+Write-Progress -Activity $ProgressActivity -Completed
+
+$ProgressActivity = "Loading Prerequisites."
+$ProgressOperation = "Loading module MSOnline."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 import-module MSOnline
+$ProgressOperation = "Loading module ExchangeOnlineManagement."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 import-module ExchangeOnlineManagement
+$ProgressOperation = "Loading module ImportExcel."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 import-module ImportExcel
+
+Write-Progress -Activity $ProgressActivity -Completed
 
 $FriendlyNameArray = @'
 AAD_BASIC = Azure Active Directory Basic
@@ -265,11 +301,17 @@ YAMMER_ENTERPRISE = Yammer for the Starship Enterprise
 YAMMER_ENTERPRISE_STANDALONE = Yammer Enterprise
 YAMMER_MIDSIZE = Yammer
 '@
-
 $FriendlyNameHash = $FriendlyNameArray | ConvertFrom-StringData
 
+#connect to microsoft services
+$ProgressActivity = "Connecting to Microsoft services. You will be prompted twice."
+$ProgressOperation = "1 of 2 - Connecting to Exchange Online."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 try { Connect-ExchangeOnline } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
+$ProgressOperation = "2 of 2 - Connecting to MSOL Service."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 try { Connect-MsolService } catch { write-error "Not connected to MSOL service. Exiting."; exit } 
+Write-Progress -Activity $ProgressActivity -Completed
 
 #define paths
 $datestring = ((get-date).tostring("yyyy-MM-dd"))
@@ -279,21 +321,27 @@ $tenantpath = "$DesktopPath\365QuickReport\$tenant"
 $reportspath = "$tenantpath\reports"
 $XLSreport = "$reportspath\$tenant-report-$datestring.xlsx"
 
+$ProgressActivity = "Gathering Exchange Online mailbox data."
+$ProgressOperation = "Listing Mailboxes."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+#construct report output object
 $ResultObject = @()
 $MBUserCount = 0
 $Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
 $MBUserTotal = $($Mailboxes).count
 
 $Mailboxes | ForEach-Object {
+    $MBUserCount++
+    $ProgressOperation = "Gathering mailbox data for $DisplayName"
+    $ProgressPercent = ($MBUserCount / $MBUserTotal) * 100
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
     $upn = $_.UserPrincipalName
     $CreationTime = $_.WhenCreated
     $LastLogonTime = (Get-MailboxStatistics -Identity $upn).lastlogontime
     $DisplayName = $_.DisplayName
     $MBType = $_.RecipientTypeDetails
-    $MBUserCount++
     $RolesAssigned = ""
-    Write-Progress -Activity "`n     Processed mailbox count: $MBUserCount of $MBUserTotal "`n"  Currently Processing: $DisplayName"
-
+    
     #Retrieve lastlogon time and then calculate Inactive days
     if ($LastLogonTime -eq $null) {
         $LastLogonTime = "Never Logged In"
@@ -361,7 +409,10 @@ $Mailboxes | ForEach-Object {
     $ResultObject += $userObject
 	
 }
+Write-Progress -Activity $ProgressActivity -Completed
 
+$ProgressActivity = "Building Excel report."
+$ProgressOperation = "Exporting to Excel."
 $ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLogonTime, CreationTime, LastPasswordChangeTimeStamp, InactiveDays, SignInBlocked, MailboxType, AssignedLicenses, Roles | Sort-Object -Property Department, MailboxType, UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Quick Report" `
@@ -375,6 +426,8 @@ $ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLo
     New-ConditionalText "Company Administrator" -BackgroundColor Yellow
 )`
     -Show
+
+Write-Progress -Activity $ProgressActivity -Completed
 
 #Clean up session
 Disconnect-ExchangeOnline
