@@ -15,50 +15,36 @@
 						If we meet some day, and you think this stuff is worth it, you can buy me a beer in return.
 #>
 
-#I'm eventually going to write a better prereq checker/installer function and use something like this for input.
-$PrerequisitesTable = @'
-Name,Repository,Scope,Version
-Microsoft.Graph,PSGallery,CurrentUser,1.25.0
-ExchangeOnlineManagement,PSGallery,CurrentUser,3.0.0
-ImportExcel,PSGallery,CurrentUser,7.0.0
+function CheckPrerequisites($PrerequisiteModulesTable){
+    $PrerequisiteModules = $PrerequisiteModulesTable | ConvertFrom-Csv
+    $ProgressActivity = "Checking for prerequisite modules."
+    ForEach ( $PrerequisiteModule in $PrerequisiteModules ){
+        $moduleName = $($PrerequisiteModule.Name)
+        $ProgressOperation = "Checking for module $moduleName."
+        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+        $minimumVersion = $($PrerequisiteModule.minimumversion)
+        $installedversion = $(Get-Module -ListAvailable -Name $moduleName | Select-Object -first 1).version
+        If (!($installedversion)) { 
+            try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
+        }
+        elseif ([version]$installedversion -lt [version]$minimumversion) {
+            try { Uninstall-Module $moduleName -AllVersions } catch { Write-Error "An error occurred removing $moduleName. You may need to manually remove old versions using admin privileges." }
+            try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
+        }
+#        $ProgressOperation = "Loading module $moduleName."
+#        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+#        try { Import-Module $moduleName } catch {Write-Error "An error occurred loading $modulename."; exit} #super don't do this for Microsoft Graph
+    }
+    }
+    
+$PrerequisiteModulesTable = @'
+Name,MinimumVersion
+Microsoft.Graph,1.25.0
+ExchangeOnlineManagement,3.0.0
+ImportExcel,7.0.0
 '@
-$Prerequisites = $PrerequisitesTable | ConvertFrom-Csv
-$Prerequisites #| Out-GridView
+CheckPrerequisites($PrerequisiteModulesTable)
 
-#install the necessary modules if they aren't installed already
-$ProgressActivity = "Checking Prerequisites."
-$ProgressOperation = "Checking for module MSOnline."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-If (!(Get-Module -ListAvailable -Name MSOnline)) { Install-Module MSOnline -scope CurrentUser -Force } 
-
-$ProgressOperation = "Checking for module ExchangeOnlineManagement."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-[version] $moduleversion = $(Get-Module -ListAvailable -Name ExchangeOnlineManagement).version
-[version] $minimumversion = "3.0.0"
-If (!($moduleversion)) { 
-    Install-Module ExchangeOnlineManagement -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion
-} elseif ($moduleversion -lt $minimumversion) {
-    Uninstall-Module ExchangeOnlineManagement #this may fail because i haven't checked for admin
-    Install-Module ExchangeOnlineManagement -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion
-}
-
-$ProgressOperation = "Checking for module ImportExcel."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-If (!(Get-Module -ListAvailable -Name ImportExcel)) { Install-Module ImportExcel -scope CurrentUser -Force } 
-Write-Progress -Activity $ProgressActivity -Completed
-
-$ProgressActivity = "Loading Prerequisites."
-$ProgressOperation = "Loading module MSOnline."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-import-module MSOnline
-$ProgressOperation = "Loading module ExchangeOnlineManagement."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-import-module ExchangeOnlineManagement
-$ProgressOperation = "Loading module ImportExcel."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-import-module ImportExcel
-
-Write-Progress -Activity $ProgressActivity -Completed
 
 $FriendlyNameArray = @'
 AAD_BASIC = Azure Active Directory Basic
@@ -313,6 +299,8 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 try { Connect-MsolService } catch { write-error "Not connected to MSOL service. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
+Connect-MgGraph -Scopes "User.Read.All"
+
 #define paths
 $datestring = ((get-date).tostring("yyyy-MM-dd"))
 $tenant = (Get-AcceptedDomain | Where-Object { $_.Default }).name
@@ -332,20 +320,20 @@ $MBUserTotal = $($Mailboxes).count
 
 $Mailboxes | ForEach-Object {
     $MBUserCount++
+    $DisplayName = $_.DisplayName
     $ProgressOperation = "Gathering mailbox data for $DisplayName"
     $ProgressPercent = ($MBUserCount / $MBUserTotal) * 100
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
     $upn = $_.UserPrincipalName
     $CreationTime = $_.WhenCreated
     $LastLogonTime = (Get-MailboxStatistics -Identity $upn).lastlogontime
-    $DisplayName = $_.DisplayName
     $MBType = $_.RecipientTypeDetails
     $RolesAssigned = ""
     
     #Retrieve lastlogon time and then calculate Inactive days
     if ($LastLogonTime -eq $null) {
         $LastLogonTime = "Never Logged In"
-        $InactiveDaysOfUser = "-"
+        $InactiveDaysOfUser = "-1"
     }
     else {
         $InactiveDaysOfUser = (New-TimeSpan -Start $LastLogonTime).Days
@@ -354,7 +342,6 @@ $Mailboxes | ForEach-Object {
     #Get licenses assigned to mailboxes
     $User = (Get-MsolUser -UserPrincipalName $upn)
     $Licenses = $User.Licenses.AccountSkuId
-    $Department = $User.Department
     $SignInBlocked = $null
     if ($User.BlockCredential -eq "True") {
         $SignInBlocked = "sign-in blocked"
@@ -374,19 +361,26 @@ $Mailboxes | ForEach-Object {
         $AssignedLicense = $AssignedLicense + $NamePrint
         if ($count -lt $licenses.count) { $AssignedLicense = $AssignedLicense + "," }
     }
-    if ($Licenses.count -eq 0) { $AssignedLicense = "No License Assigned" }
+    if ($Licenses.count -eq 0) { $AssignedLicense = "No Licenses Assigned" }
 
     #Get roles assigned to user
     $Roles = (Get-MsolUserRole -UserPrincipalName $upn).Name
     if ($Roles.count -eq 0) { 
-        $RolesAssigned = "No roles"
+        $RolesAssigned = "none"
     }
     else {
-        foreach ($Role in $Roles) {
-            $RolesAssigned = $RolesAssigned + $Role
-            if ($Roles.indexof($role) -lt (($Roles.count) - 1)) { $RolesAssigned = $RolesAssigned + "," }
-        }
+        $RolesAssigned = $Roles -join ","
+        #foreach ($Role in $Roles) {
+        #    $RolesAssigned = $RolesAssigned + $Role
+        #    if ($Roles.indexof($role) -lt (($Roles.count) - 1)) { $RolesAssigned = $RolesAssigned + "," } #append a comma to the string
+        #}
     }
+
+    # Get department and manager from Graph
+    $MGUser = Get-MgUser -UserId $upn
+    $Department = $MGUser.Department
+    $Manager = $null
+    try {$Manager = Get-MgUserManager -UserId $upn -Erroraction SilentlyContinue | Select-Object @{E = { $_.additionalProperties['displayName'] } }} catch {Write-Warning "An error occurred getting Manager for $upn."}
 
     #Add result to output object
 	
@@ -403,6 +397,7 @@ $Mailboxes | ForEach-Object {
         'MailboxType'                 = $MBType
         'AssignedLicenses'            = $AssignedLicense
         'Roles'                       = $RolesAssigned
+        'Manager'                     = $Manager
     }
     $userObject = $null
     $userObject = New-Object PSObject -Property $userHash
@@ -413,7 +408,7 @@ Write-Progress -Activity $ProgressActivity -Completed
 
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
-$ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLogonTime, CreationTime, LastPasswordChangeTimeStamp, InactiveDays, SignInBlocked, MailboxType, AssignedLicenses, Roles | Sort-Object -Property Department, MailboxType, UserPrincipalName | Export-Excel `
+$ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLogonTime, CreationTime, LastPasswordChangeTimeStamp, InactiveDays, SignInBlocked, MailboxType, AssignedLicenses, Roles, Manager | Sort-Object -Property Department, MailboxType, UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Quick Report" `
     -ClearSheet `
@@ -430,5 +425,6 @@ $ResultObject | Select-Object Department, UserPrincipalName, DisplayName, LastLo
 Write-Progress -Activity $ProgressActivity -Completed
 
 #Clean up session
+Disconnect-MgGraph
 Disconnect-ExchangeOnline
 [Microsoft.Online.Administration.Automation.ConnectMsolService]::ClearUserSessionState()
