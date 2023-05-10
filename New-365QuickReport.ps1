@@ -15,10 +15,10 @@
 						If we meet some day, and you think this stuff is worth it, you can buy me a beer in return.
 #>
 
-function CheckPrerequisites($PrerequisiteModulesTable){
+function CheckPrerequisites($PrerequisiteModulesTable) {
     $PrerequisiteModules = $PrerequisiteModulesTable | ConvertFrom-Csv
     $ProgressActivity = "Checking for prerequisite modules."
-    ForEach ( $PrerequisiteModule in $PrerequisiteModules ){
+    ForEach ( $PrerequisiteModule in $PrerequisiteModules ) {
         $moduleName = $($PrerequisiteModule.Name)
         $ProgressOperation = "Checking for module $moduleName."
         Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
@@ -31,11 +31,11 @@ function CheckPrerequisites($PrerequisiteModulesTable){
             try { Uninstall-Module $moduleName -AllVersions } catch { Write-Error "An error occurred removing $moduleName. You may need to manually remove old versions using admin privileges." }
             try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
         }
-#        $ProgressOperation = "Loading module $moduleName."
-#        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-#        try { Import-Module $moduleName } catch {Write-Error "An error occurred loading $modulename."; exit} #super don't do this for Microsoft Graph
+        #        $ProgressOperation = "Loading module $moduleName."
+        #        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+        #        try { Import-Module $moduleName } catch {Write-Error "An error occurred loading $modulename."; exit} #super don't do this for Microsoft Graph
     }
-    }
+}
     
 $PrerequisiteModulesTable = @'
 Name,MinimumVersion
@@ -290,16 +290,18 @@ YAMMER_MIDSIZE = Yammer
 $FriendlyNameHash = $FriendlyNameArray | ConvertFrom-StringData
 
 #connect to microsoft services
-$ProgressActivity = "Connecting to Microsoft services. You will be prompted twice."
-$ProgressOperation = "1 of 2 - Connecting to Exchange Online."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-try { Connect-ExchangeOnline } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
-$ProgressOperation = "2 of 2 - Connecting to MSOL Service."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
+$ProgressOperation = "1 of 3 - Connecting to Exchange Online."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 0
+try { Connect-ExchangeOnline | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
+$ProgressOperation = "2 of 3 - Connecting to MSOL Service."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 33
 try { Connect-MsolService } catch { write-error "Not connected to MSOL service. Exiting."; exit } 
+$ProgressOperation = "3 of 3 - Connecting to Microsoft Graph."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 66
+try { Connect-MgGraph -Scopes "User.Read.All" } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
-Connect-MgGraph -Scopes "User.Read.All"
 
 #define paths
 $datestring = ((get-date).tostring("yyyy-MM-dd"))
@@ -377,10 +379,12 @@ $Mailboxes | ForEach-Object {
     }
 
     # Get department and manager from Graph
-    $MGUser = Get-MgUser -UserId $upn
+    $MGError = "An error occurred getting data for $upn. "
+    try { $MGUser = Get-MgUser -UserId $upn -Erroraction 'SilentlyContinue' } catch { Write-Warning $MGError }
     $Department = $MGUser.Department
     $Manager = $null
-    try {$Manager = Get-MgUserManager -UserId $upn -Erroraction SilentlyContinue | Select-Object @{E = { $_.additionalProperties['displayName'] } }} catch {Write-Warning "An error occurred getting Manager for $upn."}
+    try { $Manager = $(Get-MgUser -UserID $(Get-MgUserManager -UserId $upn -Erroraction 'SilentlyContinue').id).DisplayName } catch { Write-Warning $MGError }
+    #try {$Manager = Get-MgUserManager -UserId $upn -Erroraction 'SilentlyContinue' | Select-Object @{E = { $_.additionalProperties['displayName'] } }} catch {Write-Warning $MGError}
 
     #Add result to output object
 	
@@ -426,5 +430,5 @@ Write-Progress -Activity $ProgressActivity -Completed
 
 #Clean up session
 Disconnect-MgGraph
-Disconnect-ExchangeOnline
+Disconnect-ExchangeOnline -Confirm:$false
 [Microsoft.Online.Administration.Automation.ConnectMsolService]::ClearUserSessionState()
