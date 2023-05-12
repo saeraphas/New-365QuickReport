@@ -106,19 +106,33 @@ $Mailboxes | ForEach-Object {
         $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
     }
 
+    # these properties require the AzureAD module and need to be replaced
+    # #Get roles assigned to user
+    # $Roles = (Get-MsolUserRole -UserPrincipalName $upn).Name
+    # if ($Roles.count -eq 0) { 
+    #     $RolesAssigned = "No roles"
+    # }
+    # else {
+    #     foreach ($Role in $Roles) {
+    #         $RolesAssigned = $RolesAssigned + $Role
+    #         if ($Roles.indexof($role) -lt (($Roles.count) - 1)) { $RolesAssigned = $RolesAssigned + "," }
+    #     }
+    # }
+
     # these $MGUser properties require the (dreadful,unwieldy) Microsoft Graph module (give me my hair back)
-    $MGUser = Get-MGUser -UserID $UserPrincipalName -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime 
-#    $MGUser | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime
+    $MGUser = Get-MGUser -UserID $UserPrincipalName -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime
+
+    $MGUserEnabled = $null
+    if ($MGUser.AccountEnabled -eq $true) { $MGUserEnabled = "allowed" } else { $MGUserEnabled = "blocked" }
 
     $MGUserPasswordAge = (New-TimeSpan -Start $MGUser.LastPasswordChangeDateTime).Days 
 
     $MGUserLicenses = $(get-mguserlicensedetail -userid $($MGUser).id).SkuPartNumber 
-    #convert SKUs to Product Names unless downloading the CSV from documentation failed earlier
+    #convert SKUs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
     IF ($SkipSKUConversion) { $MGUserLicenseProductNames = $MGUserLicenses -join "," } else {
         $MGUserLicenseProductNameArray = @()
         if ($MGUserLicenses.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
             foreach ($License in $MGUserLicenses) {
-#                $ProductName = $MicrosoftProducts | Where-Object { $_.String_ID -eq $License } | Select-Object -Property Product_Display_Name
                 $ProductName = $($MicrosoftProducts | Where-Object { $_.String_ID -eq $License }).Product_Display_Name
                 if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
             }
@@ -126,28 +140,25 @@ $Mailboxes | ForEach-Object {
         }
     }
     
-    $MGUserEnabled = $null
-    if ($MGUser.AccountEnabled -eq $true) { $MGUserEnabled = "allowed" } else { $MGUserEnabled = "blocked" }
-
     $MGUserManager = $null
     $MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
     
     # build result object
     $userHash = $null
     $userHash = @{
-        'UserPrincipalName'    = $userPrincipalName
-        'DisplayName'          = $MGUser.DisplayName
-        'Sign-In'              = $MGUserEnabled
-        'Department'           = $MGUser.Department
-        'JobTitle'             = $MGUser.JobTitle
-        'PasswordAge'          = $MGUserPasswordAge
-        'MailboxType'          = $MailboxType
-        'MailboxCreationTime'  = $MailboxCreationDateTime
-        'MailboxLastLogonTime' = $MailboxLastLogonDateTime
-        'MailboxInactiveDays'  = $MailboxInactiveDays
-        'AssignedLicenses'     = $MGUserLicenseProductNames
+        'UserPrincipalName'   = $userPrincipalName
+        'DisplayName'         = $MGUser.DisplayName
+        'Sign-In'             = $MGUserEnabled
+        'Department'          = $MGUser.Department
+        'JobTitle'            = $MGUser.JobTitle
+        'PasswordAge'         = $MGUserPasswordAge
+        'MailboxType'         = $MailboxType
+        'MailboxCreated'      = $MailboxCreationDateTime
+        'MailboxLastLogon'    = $MailboxLastLogonDateTime
+        'MailboxInactiveDays' = $MailboxInactiveDays
+        'AssignedLicenses'    = $MGUserLicenseProductNames
         #        'Roles'  = $RolesAssigned
-        'Manager'              = $MGUserManager
+        'Manager'             = $MGUserManager
     }
     $userObject = $null
     $userObject = New-Object PSObject -Property $userHash
@@ -170,6 +181,7 @@ $ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Departmen
     -Autofilter `
     -ConditionalText $(
     New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+    New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Company Administrator" -BackgroundColor Yellow
 )`
     -Show
