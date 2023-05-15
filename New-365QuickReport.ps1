@@ -1,15 +1,16 @@
 <#
 .SYNOPSIS
-	This script collects data from Exchange Online and Azure AD and builds a quick reports intended for customer review as part of periodic housekeeping, license audits, true-ups, etc.
+	This script collects data from Exchange Online and Microsoft Graph and builds a quick report intended for periodic housekeeping, license audits, true-ups, etc.
 
 .DESCRIPTION
-	Cobbled together from various script snippets, examples, tutorials, and howtos into a good-enough script for my purposes. 
+	Lists all mailboxes in a Microsoft 365 tenant, along with sign-in, license, and role information.  
 	
 .EXAMPLE
 	.\New-365QuickReport.ps1
 
 .NOTES
     Author:             Douglas Hammond (douglas@douglashammond.com)
+    Additional Credit:  Troy Hayes (thayes@nexigen.com)
 	License: 			This script is distributed under "THE BEER-WARE LICENSE" (Revision 42):
 						As long as you retain this notice you can do whatever you want with this stuff.
 						If we meet some day, and you think this stuff is worth it, you can buy me a beer in return.
@@ -47,24 +48,24 @@ ImportExcel,7.0.0
 '@
 CheckPrerequisites($PrerequisiteModulesTable)
 
+$PSNewLine = [System.Environment]::Newline
+
 #download SKU and product name reference information from Microsoft Learn
 #https://learn.microsoft.com/en-us/azure/active-directory/enterprise-users/licensing-service-plan-reference
 $MicrosoftDocumentationURI = 'https://learn.microsoft.com/en-us/azure/active-directory/enterprise-users/licensing-service-plan-reference'
 $MicrosoftDocumentationCSVURI = ((Invoke-WebRequest -UseBasicParsing -Uri $MicrosoftDocumentationURI).Links | Where-Object { $_.href -like 'http*' } | Where-Object { $_.href -like '*.csv' }).href
-$MicrosoftDocumentationDownloadError = "An error occurred while downloading the SKU and Product Name information. `r`nSKU names will not be converted to Product Names."
+$MicrosoftDocumentationDownloadError = "An error occurred while downloading the SKU and Product Name information." + $PSNewLine + "SKU names will not be converted to Product Names."
 try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI -Method Get | ConvertFrom-CSV | Select-Object String_ID, Product_Display_Name -Unique } catch { Write-Warning $MicrosoftDocumentationDownloadError; $SkipSKUConversion = $true }
 
 #connect to microsoft services
 $ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
-$ProgressOperation = "1 of 3 - Connecting to Exchange Online."
+$ProgressOperation = "1 of 2 - Connecting to Exchange Online."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 0
-try { Connect-ExchangeOnline | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
-#$ProgressOperation = "2 of 3 - Connecting to MSOL Service."
-#Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 33
-#try { Connect-MsolService } catch { write-error "Not connected to MSOL service. Exiting."; exit } 
-$ProgressOperation = "3 of 3 - Connecting to Microsoft Graph."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 66
-try { Connect-MgGraph -Scopes "User.Read.All" } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
+try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
+
+$ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
+try { Connect-MgGraph -Scopes "User.Read.All,RoleManagement.Read.Directory" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
@@ -80,6 +81,9 @@ $ResultObject = @()
 $ProgressActivity = "Gathering account data."
 $ProgressOperation = "Listing Mailboxes."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
+#Get all role definitions from Graph API (for display names) #Thanks, Troy
+$roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
 
 $Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
 $MailboxProgressBarCounter = 0
@@ -106,19 +110,6 @@ $Mailboxes | ForEach-Object {
         $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
     }
 
-    # these properties require the AzureAD module and need to be replaced
-    # #Get roles assigned to user
-    # $Roles = (Get-MsolUserRole -UserPrincipalName $upn).Name
-    # if ($Roles.count -eq 0) { 
-    #     $RolesAssigned = "No roles"
-    # }
-    # else {
-    #     foreach ($Role in $Roles) {
-    #         $RolesAssigned = $RolesAssigned + $Role
-    #         if ($Roles.indexof($role) -lt (($Roles.count) - 1)) { $RolesAssigned = $RolesAssigned + "," }
-    #     }
-    # }
-
     # these $MGUser properties require the (dreadful,unwieldy) Microsoft Graph module (give me my hair back)
     $MGUser = Get-MGUser -UserID $UserPrincipalName -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime
 
@@ -139,7 +130,18 @@ $Mailboxes | ForEach-Object {
             $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
         }
     }
-    
+
+    #Get user's role assignments from Graph API #Thanks, Troy
+    $MGUserRoleAssignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '$($MGUser.ID)'" | Select-Object RoleDefinitionId
+    $MGUserRoleArray = @()
+    #Match role definition IDs to display names #Thanks, Troy
+    if ($MGUserRoleAssignments.count -eq 0) { $MGUserRoles = "none" } else {
+        foreach ($RoleAssignment in $MGUserRoleAssignments) {
+            $MGUserRoleArray += ($roleDefinitions | Where-Object { $_.Id -eq $RoleAssignment.RoleDefinitionId }).DisplayName
+        }
+        $MGUserRoles = $MGUserRoleArray -join ","
+    }
+
     $MGUserManager = $null
     $MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
     
@@ -150,14 +152,14 @@ $Mailboxes | ForEach-Object {
         'DisplayName'         = $MGUser.DisplayName
         'Sign-In'             = $MGUserEnabled
         'Department'          = $MGUser.Department
-        'JobTitle'            = $MGUser.JobTitle
+        'Title'               = $MGUser.JobTitle
         'PasswordAge'         = $MGUserPasswordAge
         'MailboxType'         = $MailboxType
         'MailboxCreated'      = $MailboxCreationDateTime
         'MailboxLastLogon'    = $MailboxLastLogonDateTime
         'MailboxInactiveDays' = $MailboxInactiveDays
-        'AssignedLicenses'    = $MGUserLicenseProductNames
-        #        'Roles'  = $RolesAssigned
+        'Licenses'            = $MGUserLicenseProductNames
+        'Roles'               = $MGUserRoles
         'Manager'             = $MGUserManager
     }
     $userObject = $null
@@ -171,7 +173,7 @@ $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-$ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, JobTitle, PasswordAge, MailboxType, MailboxCreationTime, MailboxLastLogonTime, MailboxInactiveDays, AssignedLicenses, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
+$ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Quick Report" `
     -ClearSheet `
@@ -182,13 +184,12 @@ $ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Departmen
     -ConditionalText $(
     New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
-    New-ConditionalText "Company Administrator" -BackgroundColor Yellow
+    New-ConditionalText "Global Administrator" -BackgroundColor Yellow
 )`
     -Show
 
 Write-Progress -Activity $ProgressActivity -Completed
 
 #Clean up session
-Disconnect-ExchangeOnline -Confirm:$false
-#[Microsoft.Online.Administration.Automation.ConnectMsolService]::ClearUserSessionState()
-Disconnect-MgGraph
+Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+Disconnect-MgGraph | Out-Null
