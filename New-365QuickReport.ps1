@@ -55,7 +55,7 @@ $PSNewLine = [System.Environment]::Newline
 $MicrosoftDocumentationURI = 'https://learn.microsoft.com/en-us/azure/active-directory/enterprise-users/licensing-service-plan-reference'
 $MicrosoftDocumentationCSVURI = ((Invoke-WebRequest -UseBasicParsing -Uri $MicrosoftDocumentationURI).Links | Where-Object { $_.href -like 'http*' } | Where-Object { $_.href -like '*.csv' }).href
 $MicrosoftDocumentationDownloadError = "An error occurred while downloading the SKU and Product Name information." + $PSNewLine + "SKU names will not be converted to Product Names."
-try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI -Method Get | ConvertFrom-CSV | Select-Object String_ID, Product_Display_Name -Unique } catch { Write-Warning $MicrosoftDocumentationDownloadError; $SkipSKUConversion = $true }
+try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI -Method Get | ConvertFrom-CSV | Select-Object String_ID, Product_Display_Name, GUID -Unique } catch { Write-Warning $MicrosoftDocumentationDownloadError; $SkipSKUConversion = $true }
 
 #connect to microsoft services
 $ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
@@ -65,7 +65,7 @@ try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-try { Connect-MgGraph -Scopes "User.Read.All,RoleManagement.Read.Directory" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
+try { Connect-MgGraph -Scopes "User.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
@@ -84,6 +84,22 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
 #Get all role definitions from Graph API (for display names) #Thanks, Troy
 $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
+
+# Eventually gonna rewrite this to reverse the order and produce a list of 365 accounts with additional mailbox data, instead of a list of 365 mailboxes with additional account data
+# $365Users = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+# Foreach ($365User in $365Users) {
+#     $365UserLicenses = $365User.AssignedLicenses 
+#     #convert GUIDs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
+#     $365UserLicenseProductNameArray = @()
+#     if ($365UserLicenses.count -eq 0) { $365UserLicenseProductNames = "none" } else {
+#         foreach ($License in $365UserLicenses) {
+#             $License = $($License | Select-Object -ExpandProperty SkuId).trim('{}') #the license GUIDs have brackets, but the reference list doesn't
+#             $ProductName = $($MicrosoftProducts | Where-Object { $_.GUID -eq $License }).Product_Display_Name
+#             if (!($ProductName)) { $365UserLicenseProductNameArray += $License } else { $365UserLicenseProductNameArray += $ProductName }
+#         }
+#         $365UserLicenseProductNames = $365UserLicenseProductNameArray -join ","
+#     }
+# }
 
 $Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
 $MailboxProgressBarCounter = 0
@@ -185,8 +201,33 @@ $ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Departmen
     New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Global Administrator" -BackgroundColor Yellow
-)`
-    -Show
+)#`
+#    -Show
+
+$ProgressActivity = "Gathering group data."
+$ProgressOperation = "Listing Group Memberships."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+#$ResultObject = [System.Collections.Generic.List[Object]]::new()
+$ResultObject = $null
+$MGGroupList = Get-MgGroup
+$ResultObject = ForEach ($MGGroup in $MGGroupList) {
+    Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
+}
+
+Write-Progress -Activity $ProgressActivity -Completed
+
+$ProgressActivity = "Building Excel report."
+$ProgressOperation = "Exporting to Excel."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
+$ResultObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
+    -Path $XLSreport `
+    -WorkSheetname "365 Group Memberships" `
+    -ClearSheet `
+    -BoldTopRow `
+    -Autosize `
+    -FreezePane 2 `
+    -Autofilter
 
 Write-Progress -Activity $ProgressActivity -Completed
 
