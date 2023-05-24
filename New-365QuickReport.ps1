@@ -25,7 +25,7 @@ Param (
 )
 
 function CheckForUpdates($GitHubURI) {
-    IF (!($null -eq $myInvocation.ScriptName)) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
+    IF ($null -eq $myInvocation.ScriptName) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
         $LocalScriptPath = $myInvocation.ScriptName
         $LocalScriptContent = Get-Content $LocalScriptPath
         $CloudScriptPath = $GitHubURI
@@ -35,14 +35,14 @@ function CheckForUpdates($GitHubURI) {
         $writer = [System.IO.StreamWriter]::new($localstringAsStream)
         $writer.write($LocalScriptContent)
         $writer.Flush()
-        $stringAsStream.Position = 0
+        $localstringAsStream.Position = 0
         $LocalScriptHash = (Get-FileHash -InputStream $localstringAsStream -Algorithm SHA256).Hash
 
         $cloudstringAsStream = [System.IO.MemoryStream]::new()
         $writer = [System.IO.StreamWriter]::new($cloudstringAsStream)
         $writer.write($CloudScriptContent)
         $writer.Flush()
-        $stringAsStream.Position = 0
+        $cloudstringAsStream.Position = 0
         $CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
 
         Write-Verbose "Local Script Hash: $LocalScriptHash"
