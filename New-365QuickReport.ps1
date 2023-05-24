@@ -323,6 +323,13 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
     $MGGroupList = Get-MgGroup
+    If (!($MGGroupList.count -gt 0)) {
+        Write-Verbose "No Groups."
+        Write-Progress -Activity $ProgressActivity -Completed
+        $SkipGroupReport = $true 
+    }
+}
+If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
     $GroupProgressBarCounter = 0
     $365GroupReportObject = ForEach ($MGGroup in $MGGroupList) {
         $GroupProgressBarCounter++
