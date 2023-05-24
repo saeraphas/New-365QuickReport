@@ -297,7 +297,7 @@ $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
 #$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
-$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
+$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Mailboxes" `
     -ClearSheet `
