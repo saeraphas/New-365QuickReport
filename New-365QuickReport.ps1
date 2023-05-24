@@ -121,17 +121,16 @@ $TenantPath = "$DesktopPath\365QuickReport\$TenantString"
 $ReportPath = "$TenantPath\Reports"
 $XLSreport = "$ReportPath\$TenantString-report-$DateString.xlsx"
 
-#construct report output object
-$365UserReportObject = @()
+#Get all role definitions from Microsoft Graph (for display names) #Thanks, Troy
+$roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
 
 $ProgressActivity = "Retrieving 365 user account data."
 $ProgressOperation = "Retrieving user list."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-#Get all role definitions from Microsoft Graph (for display names) #Thanks, Troy
-$roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
-
 #Get the 365 user list using Microsoft Graph
+#construct report output object
+$365UserReportObject = @()
 $MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
 $MGUserProgressBarCounter = 0
 Foreach ($MGUser in $MGUsers) {
@@ -207,13 +206,11 @@ Foreach ($MGUser in $MGUsers) {
     $userObject = New-Object PSObject -Property $userHash
     $365UserReportObject += $userObject
 }
-
 Write-Progress -Activity $ProgressActivity -Completed
 
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-
 $365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Users" `
@@ -227,7 +224,6 @@ $365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, De
     New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Global Administrator" -BackgroundColor Yellow
 )
-
 Write-Progress -Activity $ProgressActivity -Completed
 
 #check whether mailbox report skip is set by parameter
@@ -238,7 +234,11 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
     $Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
-    If (!($Mailboxes.count -gt 0)) { $SkipMailboxReport = $true }
+    If (!($Mailboxes.count -gt 0)) {
+        Write-Verbose "No Mailboxes."
+        Write-Progress -Activity $ProgressActivity -Completed
+        $SkipMailboxReport = $true 
+    }
 }
 If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
     #construct report output object
@@ -293,38 +293,36 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
         $mailboxObject = $null
         $mailboxObject = New-Object PSObject -Property $mailboxHash
         $365MailboxReportObject += $mailboxObject
-	
-        Write-Progress -Activity $ProgressActivity -Completed
     }
-    
-    If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
+    Write-Progress -Activity $ProgressActivity -Completed
 
-        $ProgressActivity = "Building Excel report."
-        $ProgressOperation = "Exporting to Excel."
-        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+    $ProgressActivity = "Building Excel report."
+    $ProgressOperation = "Exporting to Excel."
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+    $365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
+        -Path $XLSreport `
+        -WorkSheetname "365 Mailboxes" `
+        -ClearSheet `
+        -BoldTopRow `
+        -Autosize `
+        -FreezePane 2 `
+        -Autofilter `
+        -ConditionalText $(
+        New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+        New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+        New-ConditionalText "Global Administrator" -BackgroundColor Yellow
+    )
+    Write-Progress -Activity $ProgressActivity -Completed
+}
 
-        #$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
-        $365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
-            -Path $XLSreport `
-            -WorkSheetname "365 Mailboxes" `
-            -ClearSheet `
-            -BoldTopRow `
-            -Autosize `
-            -FreezePane 2 `
-            -Autofilter `
-            -ConditionalText $(
-            New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
-            New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
-            New-ConditionalText "Global Administrator" -BackgroundColor Yellow
-        )
-    }
-
+If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
+    # get 365 group report
     $ProgressActivity = "Retrieving group data."
     $ProgressOperation = "Retrieving group list."
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
     $MGGroupList = Get-MgGroup
     $GroupProgressBarCounter = 0
-
     $365GroupReportObject = ForEach ($MGGroup in $MGGroupList) {
         $GroupProgressBarCounter++
         $DisplayName = $MGGroup.DisplayName
@@ -333,14 +331,11 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
         Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
         Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
     }
-
     Write-Progress -Activity $ProgressActivity -Completed
 
-    # get 365 group report
     $ProgressActivity = "Building Excel report."
     $ProgressOperation = "Exporting to Excel."
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-
     $365GroupReportObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
         -Path $XLSreport `
         -WorkSheetname "365 Group Memberships" `
@@ -349,7 +344,6 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
         -Autosize `
         -FreezePane 2 `
         -Autofilter
-
     Write-Progress -Activity $ProgressActivity -Completed
 }
 
