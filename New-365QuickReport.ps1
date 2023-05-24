@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-	This script collects data from Exchange Online and Microsoft Graph and builds a quick report intended for periodic housekeeping, license audits, true-ups, etc.
+	This script collects data from Exchange Online and Microsoft Graph and builds a report intended for periodic housekeeping, license audits, true-ups, etc.
 
 .DESCRIPTION
-	Lists all mailboxes in a Microsoft 365 tenant, along with sign-in, license, and role information.  
+	Lists all accounts, mailboxes, and groups in a Microsoft 365 tenant, along with sign-in, license, and role information.  
 	
 .EXAMPLE
 	.\New-365QuickReport.ps1
@@ -18,8 +18,46 @@
 
 Param (
     [Parameter(ValueFromPipelineByPropertyName)]
+    [switch] $SkipUpdateCheck,
     [switch] $SkipSKUConversion
 )
+
+function CheckForUpdates($GitHubURI) {
+	IF (!($null -eq $myInvocation.ScriptName)) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
+	$LocalScriptPath = $myInvocation.ScriptName
+	$LocalScriptContent = Get-Content $LocalScriptPath
+	$CloudScriptPath = $GitHubURI
+	$CloudScriptContent = (Invoke-WebRequest -UseBasicParsing $CloudScriptPath).Content
+
+	$localstringAsStream = [System.IO.MemoryStream]::new()
+	$writer = [System.IO.StreamWriter]::new($localstringAsStream)
+	$writer.write($LocalScriptContent)
+	$writer.Flush()
+	$stringAsStream.Position = 0
+	$LocalScriptHash = (Get-FileHash -InputStream $localstringAsStream -Algorithm SHA256).Hash
+
+	$cloudstringAsStream = [System.IO.MemoryStream]::new()
+	$writer = [System.IO.StreamWriter]::new($cloudstringAsStream)
+	$writer.write($CloudScriptContent)
+	$writer.Flush()
+	$stringAsStream.Position = 0
+	$CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
+
+	Write-Verbose "Local Script Hash: $LocalScriptHash"
+	Write-Verbose "Cloud Script Hash: $CloudScriptHash"
+
+	If ($LocalScriptHash -ne $CloudScriptHash) {
+		$MismatchWarning = "The running script does not match the current version on GitHub."
+		Write-Warning $MismatchWarning
+		$MismatchPrompt = 'Enter "y" to switch to the GitHub version now, or any other key to continue using the local version.'
+		$Answer = Read-Host $MismatchPrompt
+		If ($Answer -eq "y") {
+			Write-Verbose "Switching to GitHub version."
+			Invoke-Expression $CloudScriptContent; exit
+		}
+	}
+}
+}
 
 function CheckPrerequisites($PrerequisiteModulesTable) {
     $PrerequisiteModules = $PrerequisiteModulesTable | ConvertFrom-Csv
@@ -40,10 +78,14 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
     }
 }
 
+#Check GitHub for a modified version
+If (!($SkipUpdateCheck)) { CheckForUpdates("https://raw.githubusercontent.com/saeraphas/New-365QuickReport/main/New-365QuickReport.ps1") }
+
+#prerequisite modules and minimum versions as embedded CSV
 $PrerequisiteModulesTable = @'
 Name,MinimumVersion
 Microsoft.Graph,1.25.0
-ExchangeOnlineManagement,3.0.0
+ExchangeOnlineManagement,3.1.0
 ImportExcel,7.0.0
 '@
 CheckPrerequisites($PrerequisiteModulesTable)
@@ -65,86 +107,67 @@ try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-try { Connect-MgGraph -Scopes "User.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
+try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
 $DateString = ((get-date).tostring("yyyy-MM-dd"))
-$TenantString = (Get-AcceptedDomain | Where-Object { $_.Default }).name
+#$TenantString = (Get-AcceptedDomain | Where-Object { $_.Default }).name
+$TenantString = (Get-MgDomain | Where-Object { $_.isInitial }).Id
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $TenantPath = "$DesktopPath\365QuickReport\$TenantString"
 $ReportPath = "$TenantPath\Reports"
 $XLSreport = "$ReportPath\$TenantString-report-$DateString.xlsx"
-#construct report output object
-$ResultObject = @()
 
-$ProgressActivity = "Gathering account data."
-$ProgressOperation = "Listing Mailboxes."
+#construct report output object
+$365UserReportObject = @()
+
+$ProgressActivity = "Retrieving 365 user account data."
+$ProgressOperation = "Retrieving user list."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-#Get all role definitions from Graph API (for display names) #Thanks, Troy
+#Get all role definitions from Microsoft Graph (for display names) #Thanks, Troy
 $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
 
-# Eventually gonna rewrite this to reverse the order and produce a list of 365 accounts with additional mailbox data, instead of a list of 365 mailboxes with additional account data
-# $365Users = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
-# Foreach ($365User in $365Users) {
-#     $365UserLicenses = $365User.AssignedLicenses 
-#     #convert GUIDs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
-#     $365UserLicenseProductNameArray = @()
-#     if ($365UserLicenses.count -eq 0) { $365UserLicenseProductNames = "none" } else {
-#         foreach ($License in $365UserLicenses) {
-#             $License = $($License | Select-Object -ExpandProperty SkuId).trim('{}') #the license GUIDs have brackets, but the reference list doesn't
-#             $ProductName = $($MicrosoftProducts | Where-Object { $_.GUID -eq $License }).Product_Display_Name
-#             if (!($ProductName)) { $365UserLicenseProductNameArray += $License } else { $365UserLicenseProductNameArray += $ProductName }
-#         }
-#         $365UserLicenseProductNames = $365UserLicenseProductNameArray -join ","
-#     }
-# }
-
-$Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
-$MailboxProgressBarCounter = 0
-
-$Mailboxes | ForEach-Object {
-    $MailboxProgressBarCounter++
-    $DisplayName = $_.DisplayName
-    $ProgressOperation = "Gathering mailbox data for $DisplayName"
-    $ProgressPercent = ($MailboxProgressBarCounter / $($Mailboxes).count) * 100
+#Get the 365 user list using Microsoft Graph
+$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+$MGUserProgressBarCounter = 0
+Foreach ($MGUser in $MGUsers) {
+    $MGUserProgressBarCounter++
+    $DisplayName = $MGUser.DisplayName
+    $ProgressOperation = "Retrieving mailbox data for $DisplayName."
+    $ProgressPercent = ($MGUserProgressBarCounter / $($MGUsers).count) * 100
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
-    
-    #these $Mailbox properties require the ExchangeOnlineManagement module
-    $userPrincipalName = $_.UserPrincipalName
-    $MailboxCreationDateTime = $_.WhenCreated 
-    $MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $userPrincipalName).lastlogontime
-    $MailboxType = $_.RecipientTypeDetails
-  
-    #Retrieve lastlogon time and then calculate days since last use
-    if ($null -eq $MailboxLastLogonDateTime) {
-        $MailboxLastLogonDateTime = "Never Signed In"
-        $MailboxInactiveDays = "-1"
-    }
-    else {
-        $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
-    }
-
-    # these $MGUser properties require the (dreadful,unwieldy) Microsoft Graph module (give me my hair back)
-    $MGUser = Get-MGUser -UserID $UserPrincipalName -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime
 
     $MGUserEnabled = $null
     if ($MGUser.AccountEnabled -eq $true) { $MGUserEnabled = "allowed" } else { $MGUserEnabled = "blocked" }
 
     $MGUserPasswordAge = (New-TimeSpan -Start $MGUser.LastPasswordChangeDateTime).Days 
 
-    $MGUserLicenses = $(get-mguserlicensedetail -userid $($MGUser).id).SkuPartNumber 
-    #convert SKUs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
-    IF ($SkipSKUConversion) { $MGUserLicenseProductNames = $MGUserLicenses -join "," } else {
-        $MGUserLicenseProductNameArray = @()
-        if ($MGUserLicenses.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
-            foreach ($License in $MGUserLicenses) {
-                $ProductName = $($MicrosoftProducts | Where-Object { $_.String_ID -eq $License }).Product_Display_Name
-                if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
-            }
-            $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
+    # slow
+    # $MGUserLicenses = $(get-mguserlicensedetail -userid $($MGUser).id).SkuPartNumber 
+    # #convert SKUs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
+    # IF ($SkipSKUConversion) { $MGUserLicenseProductNames = $MGUserLicenses -join "," } else {
+    #     $MGUserLicenseProductNameArray = @()
+    #     if ($MGUserLicenses.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
+    #         foreach ($License in $MGUserLicenses) {
+    #             $ProductName = $($MicrosoftProducts | Where-Object { $_.String_ID -eq $License }).Product_Display_Name
+    #             if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
+    #         }
+    #         $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
+    #     }
+    # }
+
+    $MGUserLicenseGUIDs = $MGUser.AssignedLicenses 
+    #convert GUIDs to Product Names
+    $MGUserLicenseProductNameArray = @()
+    if ($MGUserLicenseGUIDs.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
+        foreach ($License in $MGUserLicenseGUIDs) {
+            $License = $($License | Select-Object -ExpandProperty SkuId).trim('{}') #the license GUIDs have brackets, but the reference list doesn't
+            $ProductName = $($MicrosoftProducts | Where-Object { $_.GUID -eq $License }).Product_Display_Name
+            if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
         }
+        $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
     }
 
     #Get user's role assignments from Graph API #Thanks, Troy
@@ -160,38 +183,38 @@ $Mailboxes | ForEach-Object {
 
     $MGUserManager = $null
     $MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
-    
+
     # build result object
     $userHash = $null
     $userHash = @{
-        'UserPrincipalName'   = $userPrincipalName
-        'DisplayName'         = $MGUser.DisplayName
-        'Sign-In'             = $MGUserEnabled
-        'Department'          = $MGUser.Department
-        'Title'               = $MGUser.JobTitle
-        'PasswordAge'         = $MGUserPasswordAge
-        'MailboxType'         = $MailboxType
-        'MailboxCreated'      = $MailboxCreationDateTime
-        'MailboxLastLogon'    = $MailboxLastLogonDateTime
-        'MailboxInactiveDays' = $MailboxInactiveDays
-        'Licenses'            = $MGUserLicenseProductNames
-        'Roles'               = $MGUserRoles
-        'Manager'             = $MGUserManager
+        'UserPrincipalName' = $MGUser.userPrincipalName
+        'DisplayName'       = $MGUser.DisplayName
+        'Sign-In'           = $MGUserEnabled
+        'Department'        = $MGUser.Department
+        'Title'             = $MGUser.JobTitle
+        'PasswordAge'       = $MGUserPasswordAge
+        #        'MailboxType'         = $MailboxType
+        #        'MailboxCreated'      = $MailboxCreationDateTime
+        #        'MailboxLastLogon'    = $MailboxLastLogonDateTime
+        #        'MailboxInactiveDays' = $MailboxInactiveDays
+        'Licenses'          = $MGUserLicenseProductNames
+        'Roles'             = $MGUserRoles
+        'Manager'           = $MGUserManager
     }
     $userObject = $null
     $userObject = New-Object PSObject -Property $userHash
-    $ResultObject += $userObject
-	
+    $365UserReportObject += $userObject
 }
+
 Write-Progress -Activity $ProgressActivity -Completed
 
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-$ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
+$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
     -Path $XLSreport `
-    -WorkSheetname "365 Quick Report" `
+    -WorkSheetname "365 Users" `
     -ClearSheet `
     -BoldTopRow `
     -Autosize `
@@ -201,26 +224,116 @@ $ResultObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Departmen
     New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
     New-ConditionalText "Global Administrator" -BackgroundColor Yellow
-)#`
-#    -Show
+)
 
-$ProgressActivity = "Gathering group data."
-$ProgressOperation = "Listing Group Memberships."
+Write-Progress -Activity $ProgressActivity -Completed
+
+#get 365 mailbox report
+$ProgressActivity = "Retrieving 365 mailbox data."
+$ProgressOperation = "Retrieving mailbox list."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-#$ResultObject = [System.Collections.Generic.List[Object]]::new()
-$ResultObject = $null
-$MGGroupList = Get-MgGroup
-$ResultObject = ForEach ($MGGroup in $MGGroupList) {
-    Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
-}
 
+#construct report output object
+$365MailboxReportObject = @()
+
+$Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
+$MailboxProgressBarCounter = 0
+
+$Mailboxes | ForEach-Object {
+    $MailboxProgressBarCounter++
+    $DisplayName = $_.DisplayName
+    $ProgressOperation = "Retrieving mailbox data for $DisplayName."
+    $ProgressPercent = ($MailboxProgressBarCounter / $($Mailboxes).count) * 100
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+    
+    #these $Mailbox properties require the ExchangeOnlineManagement module
+    $userPrincipalName = $_.UserPrincipalName
+    $MailboxCreationDateTime = $_.WhenCreated 
+    $MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $userPrincipalName).lastlogontime
+    $MailboxType = $_.RecipientTypeDetails
+
+    #these properties reference the corresponding 365 user
+    $MailboxUser = $365UserReportObject | Where-Object -Property Userprincipalname -eq $userPrincipalName
+    #check whether this UPN is blocked for sign-in in the 365 users report
+    $MailboxEnabled = $MailboxUser | Select-Object -ExpandProperty Sign-In
+    #check whether this UPN has licenses assigned in the 365 users report
+    if ($MailboxUser.Licenses -eq "none"){ $MailboxLicensed = "no" } else {$MailboxLicensed = "yes"}
+    
+    #Retrieve lastlogon time and then calculate days since last use
+    if ($null -eq $MailboxLastLogonDateTime) {
+        $MailboxLastLogonDateTime = "Never Signed In"
+        $MailboxInactiveDays = "-1"
+    }
+    else {
+        $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
+    }
+
+    # build result object
+    $mailboxHash = $null
+    $mailboxHash = @{
+        'UserPrincipalName'   = $userPrincipalName
+        'DisplayName'         = $DisplayName
+        'Sign-In'             = $MailboxEnabled
+        #        'Department'          = $MGUser.Department
+        #        'Title'               = $MGUser.JobTitle
+        #        'PasswordAge'         = $MGUserPasswordAge
+        'MailboxType'         = $MailboxType
+        'MailboxCreated'      = $MailboxCreationDateTime
+        'MailboxLastLogon'    = $MailboxLastLogonDateTime
+        'MailboxInactiveDays' = $MailboxInactiveDays
+        'Licensed'            = $MailboxLicensed
+        #        'Roles'               = $MGUserRoles
+        #        'Manager'             = $MGUserManager
+    }
+    $mailboxObject = $null
+    $mailboxObject = New-Object PSObject -Property $mailboxHash
+    $365MailboxReportObject += $mailboxObject
+	
+}
 Write-Progress -Activity $ProgressActivity -Completed
 
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-$ResultObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
+#$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
+$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
+    -Path $XLSreport `
+    -WorkSheetname "365 Mailboxes" `
+    -ClearSheet `
+    -BoldTopRow `
+    -Autosize `
+    -FreezePane 2 `
+    -Autofilter `
+    -ConditionalText $(
+    New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+    New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+    New-ConditionalText "Global Administrator" -BackgroundColor Yellow
+)
+
+$ProgressActivity = "Retrieving group data."
+$ProgressOperation = "Retrieving group list."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$MGGroupList = Get-MgGroup
+$GroupProgressBarCounter = 0
+
+$365GroupReportObject = ForEach ($MGGroup in $MGGroupList) {
+    $GroupProgressBarCounter++
+    $DisplayName = $MGGroup.DisplayName
+    $ProgressOperation = "Retrieving group membership data for $DisplayName."
+    $ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+    Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
+}
+
+Write-Progress -Activity $ProgressActivity -Completed
+
+# get 365 group report
+$ProgressActivity = "Building Excel report."
+$ProgressOperation = "Exporting to Excel."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
+$365GroupReportObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Group Memberships" `
     -ClearSheet `
