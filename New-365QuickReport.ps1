@@ -25,7 +25,7 @@ Param (
 )
 
 function CheckForUpdates($GitHubURI) {
-    IF ($null -eq $myInvocation.ScriptName) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
+    IF ($($myInvocation.ScriptName).Length -eq 0) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
         $LocalScriptPath = $myInvocation.ScriptName
         $LocalScriptContent = Get-Content $LocalScriptPath
         $CloudScriptPath = $GitHubURI
@@ -56,7 +56,6 @@ function CheckForUpdates($GitHubURI) {
             $Answer = Read-Host $MismatchPrompt
             If ($Answer -eq "y") {
                 Write-Verbose "Switching to GitHub version."
-                $SkipUpdateCheck = $true
                 Invoke-Expression $CloudScriptContent; exit
             }
         }
