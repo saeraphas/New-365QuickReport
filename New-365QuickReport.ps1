@@ -19,44 +19,46 @@
 Param (
     [Parameter(ValueFromPipelineByPropertyName)]
     [switch] $SkipUpdateCheck,
+    [switch] $SkipMailboxReport,
+    [switch] $SkipGroupReport,
     [switch] $SkipSKUConversion
 )
 
 function CheckForUpdates($GitHubURI) {
-	IF (!($null -eq $myInvocation.ScriptName)) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
-	$LocalScriptPath = $myInvocation.ScriptName
-	$LocalScriptContent = Get-Content $LocalScriptPath
-	$CloudScriptPath = $GitHubURI
-	$CloudScriptContent = (Invoke-WebRequest -UseBasicParsing $CloudScriptPath).Content
+    IF (!($null -eq $myInvocation.ScriptName)) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
+        $LocalScriptPath = $myInvocation.ScriptName
+        $LocalScriptContent = Get-Content $LocalScriptPath
+        $CloudScriptPath = $GitHubURI
+        $CloudScriptContent = (Invoke-WebRequest -UseBasicParsing $CloudScriptPath).Content
 
-	$localstringAsStream = [System.IO.MemoryStream]::new()
-	$writer = [System.IO.StreamWriter]::new($localstringAsStream)
-	$writer.write($LocalScriptContent)
-	$writer.Flush()
-	$stringAsStream.Position = 0
-	$LocalScriptHash = (Get-FileHash -InputStream $localstringAsStream -Algorithm SHA256).Hash
+        $localstringAsStream = [System.IO.MemoryStream]::new()
+        $writer = [System.IO.StreamWriter]::new($localstringAsStream)
+        $writer.write($LocalScriptContent)
+        $writer.Flush()
+        $stringAsStream.Position = 0
+        $LocalScriptHash = (Get-FileHash -InputStream $localstringAsStream -Algorithm SHA256).Hash
 
-	$cloudstringAsStream = [System.IO.MemoryStream]::new()
-	$writer = [System.IO.StreamWriter]::new($cloudstringAsStream)
-	$writer.write($CloudScriptContent)
-	$writer.Flush()
-	$stringAsStream.Position = 0
-	$CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
+        $cloudstringAsStream = [System.IO.MemoryStream]::new()
+        $writer = [System.IO.StreamWriter]::new($cloudstringAsStream)
+        $writer.write($CloudScriptContent)
+        $writer.Flush()
+        $stringAsStream.Position = 0
+        $CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
 
-	Write-Verbose "Local Script Hash: $LocalScriptHash"
-	Write-Verbose "Cloud Script Hash: $CloudScriptHash"
+        Write-Verbose "Local Script Hash: $LocalScriptHash"
+        Write-Verbose "Cloud Script Hash: $CloudScriptHash"
 
-	If ($LocalScriptHash -ne $CloudScriptHash) {
-		$MismatchWarning = "The running script does not match the current version on GitHub."
-		Write-Warning $MismatchWarning
-		$MismatchPrompt = 'Enter "y" to switch to the GitHub version now, or any other key to continue using the local version.'
-		$Answer = Read-Host $MismatchPrompt
-		If ($Answer -eq "y") {
-			Write-Verbose "Switching to GitHub version."
-			Invoke-Expression $CloudScriptContent; exit
-		}
-	}
-}
+        If ($LocalScriptHash -ne $CloudScriptHash) {
+            $MismatchWarning = "The running script does not match the current version on GitHub."
+            Write-Warning $MismatchWarning
+            $MismatchPrompt = 'Enter "y" to switch to the GitHub version now, or any other key to continue using the local version.'
+            $Answer = Read-Host $MismatchPrompt
+            If ($Answer -eq "y") {
+                Write-Verbose "Switching to GitHub version."
+                Invoke-Expression $CloudScriptContent; exit
+            }
+        }
+    }
 }
 
 function CheckPrerequisites($PrerequisiteModulesTable) {
@@ -135,7 +137,7 @@ $MGUserProgressBarCounter = 0
 Foreach ($MGUser in $MGUsers) {
     $MGUserProgressBarCounter++
     $DisplayName = $MGUser.DisplayName
-    $ProgressOperation = "Retrieving mailbox data for $DisplayName."
+    $ProgressOperation = "Retrieving user data for $DisplayName."
     $ProgressPercent = ($MGUserProgressBarCounter / $($MGUsers).count) * 100
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
 
@@ -228,121 +230,128 @@ $365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, De
 
 Write-Progress -Activity $ProgressActivity -Completed
 
-#get 365 mailbox report
-$ProgressActivity = "Retrieving 365 mailbox data."
-$ProgressOperation = "Retrieving mailbox list."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+#check whether mailbox report skip is set by parameter
+If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
+    #get 365 mailbox report
+    $ProgressActivity = "Retrieving 365 mailbox data."
+    $ProgressOperation = "Retrieving mailbox list."
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-#construct report output object
-$365MailboxReportObject = @()
-
-$Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
-$MailboxProgressBarCounter = 0
-
-$Mailboxes | ForEach-Object {
-    $MailboxProgressBarCounter++
-    $DisplayName = $_.DisplayName
-    $ProgressOperation = "Retrieving mailbox data for $DisplayName."
-    $ProgressPercent = ($MailboxProgressBarCounter / $($Mailboxes).count) * 100
-    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+    $Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
+    If (!($Mailboxes.count -gt 0)) { $SkipMailboxReport = $true }
+}
+If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
+    #construct report output object
+    $365MailboxReportObject = @()
+    $MailboxProgressBarCounter = 0
+    $Mailboxes | ForEach-Object {
+        $MailboxProgressBarCounter++
+        $DisplayName = $_.DisplayName
+        $ProgressOperation = "Retrieving mailbox data for $DisplayName."
+        $ProgressPercent = ($MailboxProgressBarCounter / $($Mailboxes).count) * 100
+        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
     
-    #these $Mailbox properties require the ExchangeOnlineManagement module
-    $userPrincipalName = $_.UserPrincipalName
-    $MailboxCreationDateTime = $_.WhenCreated 
-    $MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $userPrincipalName).lastlogontime
-    $MailboxType = $_.RecipientTypeDetails
+        #these $Mailbox properties require the ExchangeOnlineManagement module
+        $userPrincipalName = $_.UserPrincipalName
+        $MailboxCreationDateTime = $_.WhenCreated 
+        $MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $userPrincipalName).lastlogontime
+        $MailboxType = $_.RecipientTypeDetails
 
-    #these properties reference the corresponding 365 user
-    $MailboxUser = $365UserReportObject | Where-Object -Property Userprincipalname -eq $userPrincipalName
-    #check whether this UPN is blocked for sign-in in the 365 users report
-    $MailboxEnabled = $MailboxUser | Select-Object -ExpandProperty Sign-In
-    #check whether this UPN has licenses assigned in the 365 users report
-    if ($MailboxUser.Licenses -eq "none"){ $MailboxLicensed = "no" } else {$MailboxLicensed = "yes"}
+        #these properties reference the corresponding 365 user
+        $MailboxUser = $365UserReportObject | Where-Object -Property Userprincipalname -eq $userPrincipalName
+        #check whether this UPN is blocked for sign-in in the 365 users report
+        $MailboxEnabled = $MailboxUser | Select-Object -ExpandProperty Sign-In
+        #check whether this UPN has licenses assigned in the 365 users report
+        if ($MailboxUser.Licenses -eq "none") { $MailboxLicensed = "no" } else { $MailboxLicensed = "yes" }
     
-    #Retrieve lastlogon time and then calculate days since last use
-    if ($null -eq $MailboxLastLogonDateTime) {
-        $MailboxLastLogonDateTime = "Never Signed In"
-        $MailboxInactiveDays = "-1"
-    }
-    else {
-        $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
-    }
+        #Retrieve lastlogon time and then calculate days since last use
+        if ($null -eq $MailboxLastLogonDateTime) {
+            $MailboxLastLogonDateTime = "Never Signed In"
+            $MailboxInactiveDays = "-1"
+        }
+        else {
+            $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
+        }
 
-    # build result object
-    $mailboxHash = $null
-    $mailboxHash = @{
-        'UserPrincipalName'   = $userPrincipalName
-        'DisplayName'         = $DisplayName
-        'Sign-In'             = $MailboxEnabled
-        #        'Department'          = $MGUser.Department
-        #        'Title'               = $MGUser.JobTitle
-        #        'PasswordAge'         = $MGUserPasswordAge
-        'MailboxType'         = $MailboxType
-        'MailboxCreated'      = $MailboxCreationDateTime
-        'MailboxLastLogon'    = $MailboxLastLogonDateTime
-        'MailboxInactiveDays' = $MailboxInactiveDays
-        'Licensed'            = $MailboxLicensed
-        #        'Roles'               = $MGUserRoles
-        #        'Manager'             = $MGUserManager
-    }
-    $mailboxObject = $null
-    $mailboxObject = New-Object PSObject -Property $mailboxHash
-    $365MailboxReportObject += $mailboxObject
+        # build result object
+        $mailboxHash = $null
+        $mailboxHash = @{
+            'UserPrincipalName'   = $userPrincipalName
+            'DisplayName'         = $DisplayName
+            'Sign-In'             = $MailboxEnabled
+            #        'Department'          = $MGUser.Department
+            #        'Title'               = $MGUser.JobTitle
+            #        'PasswordAge'         = $MGUserPasswordAge
+            'MailboxType'         = $MailboxType
+            'MailboxCreated'      = $MailboxCreationDateTime
+            'MailboxLastLogon'    = $MailboxLastLogonDateTime
+            'MailboxInactiveDays' = $MailboxInactiveDays
+            'Licensed'            = $MailboxLicensed
+            #        'Roles'               = $MGUserRoles
+            #        'Manager'             = $MGUserManager
+        }
+        $mailboxObject = $null
+        $mailboxObject = New-Object PSObject -Property $mailboxHash
+        $365MailboxReportObject += $mailboxObject
 	
+        Write-Progress -Activity $ProgressActivity -Completed
+    }
+    
+    If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
+
+        $ProgressActivity = "Building Excel report."
+        $ProgressOperation = "Exporting to Excel."
+        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
+        #$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
+        $365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
+            -Path $XLSreport `
+            -WorkSheetname "365 Mailboxes" `
+            -ClearSheet `
+            -BoldTopRow `
+            -Autosize `
+            -FreezePane 2 `
+            -Autofilter `
+            -ConditionalText $(
+            New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+            New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
+            New-ConditionalText "Global Administrator" -BackgroundColor Yellow
+        )
+    }
+
+    $ProgressActivity = "Retrieving group data."
+    $ProgressOperation = "Retrieving group list."
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+    $MGGroupList = Get-MgGroup
+    $GroupProgressBarCounter = 0
+
+    $365GroupReportObject = ForEach ($MGGroup in $MGGroupList) {
+        $GroupProgressBarCounter++
+        $DisplayName = $MGGroup.DisplayName
+        $ProgressOperation = "Retrieving group membership data for $DisplayName."
+        $ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
+        Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+        Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
+    }
+
+    Write-Progress -Activity $ProgressActivity -Completed
+
+    # get 365 group report
+    $ProgressActivity = "Building Excel report."
+    $ProgressOperation = "Exporting to Excel."
+    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+
+    $365GroupReportObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
+        -Path $XLSreport `
+        -WorkSheetname "365 Group Memberships" `
+        -ClearSheet `
+        -BoldTopRow `
+        -Autosize `
+        -FreezePane 2 `
+        -Autofilter
+
+    Write-Progress -Activity $ProgressActivity -Completed
 }
-Write-Progress -Activity $ProgressActivity -Completed
-
-$ProgressActivity = "Building Excel report."
-$ProgressOperation = "Exporting to Excel."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-
-#$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
-$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
-    -Path $XLSreport `
-    -WorkSheetname "365 Mailboxes" `
-    -ClearSheet `
-    -BoldTopRow `
-    -Autosize `
-    -FreezePane 2 `
-    -Autofilter `
-    -ConditionalText $(
-    New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
-    New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink 
-    New-ConditionalText "Global Administrator" -BackgroundColor Yellow
-)
-
-$ProgressActivity = "Retrieving group data."
-$ProgressOperation = "Retrieving group list."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$MGGroupList = Get-MgGroup
-$GroupProgressBarCounter = 0
-
-$365GroupReportObject = ForEach ($MGGroup in $MGGroupList) {
-    $GroupProgressBarCounter++
-    $DisplayName = $MGGroup.DisplayName
-    $ProgressOperation = "Retrieving group membership data for $DisplayName."
-    $ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
-    Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
-    Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
-}
-
-Write-Progress -Activity $ProgressActivity -Completed
-
-# get 365 group report
-$ProgressActivity = "Building Excel report."
-$ProgressOperation = "Exporting to Excel."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-
-$365GroupReportObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
-    -Path $XLSreport `
-    -WorkSheetname "365 Group Memberships" `
-    -ClearSheet `
-    -BoldTopRow `
-    -Autosize `
-    -FreezePane 2 `
-    -Autofilter
-
-Write-Progress -Activity $ProgressActivity -Completed
 
 #Clean up session
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
