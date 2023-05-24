@@ -45,6 +45,7 @@ function CheckForUpdates($GitHubURI) {
         $cloudstringAsStream.Position = 0
         $CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
 
+        Write-Verbose "Local Script Path: $LocalScriptPath"
         Write-Verbose "Local Script Hash: $LocalScriptHash"
         Write-Verbose "Cloud Script Hash: $CloudScriptHash"
 
@@ -55,6 +56,7 @@ function CheckForUpdates($GitHubURI) {
             $Answer = Read-Host $MismatchPrompt
             If ($Answer -eq "y") {
                 Write-Verbose "Switching to GitHub version."
+                $SkipUpdateCheck = $true
                 Invoke-Expression $CloudScriptContent; exit
             }
         }
