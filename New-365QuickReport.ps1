@@ -274,6 +274,14 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
             $MailboxInactiveDays = (New-TimeSpan -Start $MailboxLastLogonDateTime).Days
         }
 
+        #Retrieve whether or not a litigation hold is enabled on the mailbox
+        if ($_.LitigationHoldenabled = $true) {
+            $MailboxLitigationHold = "yes"
+        }
+        else {
+            $MailboxLitigationHold = "no"
+        }
+
         # build result object
         $mailboxHash = $null
         $mailboxHash = @{
@@ -288,6 +296,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
             'MailboxLastLogon'    = $MailboxLastLogonDateTime
             'MailboxInactiveDays' = $MailboxInactiveDays
             'Licensed'            = $MailboxLicensed
+            'LitigationHold'      = $MailboxLitigationHold
             #        'Roles'               = $MGUserRoles
             #        'Manager'             = $MGUserManager
         }
@@ -300,7 +309,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
     $ProgressActivity = "Building Excel report."
     $ProgressOperation = "Exporting to Excel."
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-    $365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays | Sort-Object -Property UserPrincipalName | Export-Excel `
+    $365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, LitigationHold | Sort-Object -Property UserPrincipalName | Export-Excel `
         -Path $XLSreport `
         -WorkSheetname "365 Mailboxes" `
         -ClearSheet `
