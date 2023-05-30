@@ -275,7 +275,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
         }
 
         #Retrieve whether or not a litigation hold is enabled on the mailbox
-        if ($_.LitigationHoldenabled = $true) { $MailboxLitigationHold = "yes" } else { $MailboxLitigationHold = "no" }
+        if ($_.LitigationHoldEnabled -eq $true) { $MailboxLitigationHold = "yes" } else { $MailboxLitigationHold = "no" }
 
         # build result object
         $mailboxHash = $null
@@ -348,7 +348,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
     $ProgressActivity = "Building Excel report."
     $ProgressOperation = "Exporting to Excel."
     Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-    $365GroupReportObject | Select-Object GroupName, Name | Sort-Object -Property GroupName | Export-Excel `
+    $365GroupReportObject | Select-Object GroupName, Name, userPrincipalName | Sort-Object -Property GroupName | Export-Excel `
         -Path $XLSreport `
         -WorkSheetname "365 Group Memberships" `
         -ClearSheet `
