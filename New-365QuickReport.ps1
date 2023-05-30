@@ -275,12 +275,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
         }
 
         #Retrieve whether or not a litigation hold is enabled on the mailbox
-        if ($_.LitigationHoldenabled = $true) {
-            $MailboxLitigationHold = "yes"
-        }
-        else {
-            $MailboxLitigationHold = "no"
-        }
+        if ($_.LitigationHoldenabled = $true) { $MailboxLitigationHold = "yes" } else { $MailboxLitigationHold = "no" }
 
         # build result object
         $mailboxHash = $null
