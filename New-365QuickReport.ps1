@@ -132,7 +132,7 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 #Get the 365 user list using Microsoft Graph
 #construct report output object
 $365UserReportObject = @()
-$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+$MGUsers = Get-MGUser -All -Filter "UserType eq 'Member'" -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
 $MGUserProgressBarCounter = 0
 Foreach ($MGUser in $MGUsers) {
     $MGUserProgressBarCounter++
@@ -186,22 +186,96 @@ Foreach ($MGUser in $MGUsers) {
     $MGUserManager = $null
     $MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
 
+    #Get MFA data 
+    $MFAStatus = $null
+    $MFAPhone = $null
+    $MicrosoftAuthenticatorDevice = $null
+    $Is3rdPartyAuthenticatorUsed = $null
+    [array]$MFAData = Get-MgUserAuthenticationMethod -UserId $($MGUser).id
+    $AuthenticationMethod = @()
+    $AdditionalDetails = @()
+   
+    foreach ($MFA in $MFAData) { 
+        Switch ($MFA.AdditionalProperties["@odata.type"]) { 
+            "#microsoft.graph.passwordAuthenticationMethod" {
+                $AuthMethod = 'PasswordAuthentication'
+                $AuthMethodDetails = $MFA.AdditionalProperties["displayName"] 
+            } 
+            "#microsoft.graph.microsoftAuthenticatorAuthenticationMethod" {
+                # Microsoft Authenticator App
+                $AuthMethod = 'AuthenticatorApp'
+                $AuthMethodDetails = $MFA.AdditionalProperties["displayName"] 
+                $MicrosoftAuthenticatorDevice = $MFA.AdditionalProperties["displayName"]
+            }
+            "#microsoft.graph.phoneAuthenticationMethod" {
+                # Phone authentication
+                $AuthMethod = 'PhoneAuthentication'
+                $AuthMethodDetails = $MFA.AdditionalProperties["phoneType", "phoneNumber"] -join ' ' 
+                $MFAPhone = $MFA.AdditionalProperties["phoneNumber"]
+            } 
+            "#microsoft.graph.fido2AuthenticationMethod" {
+                # FIDO2 key
+                $AuthMethod = 'Fido2'
+                $AuthMethodDetails = $MFA.AdditionalProperties["model"] 
+            }  
+            "#microsoft.graph.windowsHelloForBusinessAuthenticationMethod" {
+                # Windows Hello
+                $AuthMethod = 'WindowsHelloForBusiness'
+                $AuthMethodDetails = $MFA.AdditionalProperties["displayName"] 
+            }                        
+            "#microsoft.graph.emailAuthenticationMethod" {
+                # Email Authentication
+                $AuthMethod = 'EmailAuthentication'
+                $AuthMethodDetails = $MFA.AdditionalProperties["emailAddress"] 
+            }               
+            "microsoft.graph.temporaryAccessPassAuthenticationMethod" {
+                # Temporary Access pass
+                $AuthMethod = 'TemporaryAccessPass'
+                $AuthMethodDetails = 'Access pass lifetime (minutes): ' + $MFA.AdditionalProperties["lifetimeInMinutes"] 
+            }
+            "#microsoft.graph.passwordlessMicrosoftAuthenticatorAuthenticationMethod" {
+                # Passwordless
+                $AuthMethod = 'PasswordlessMSAuthenticator'
+                $AuthMethodDetails = $MFA.AdditionalProperties["displayName"] 
+            }      
+            "#microsoft.graph.softwareOathAuthenticationMethod" { 
+                $AuthMethod = 'SoftwareOath'
+                $Is3rdPartyAuthenticatorUsed = "True"            
+            }
+      
+        }
+        $AuthenticationMethod += $AuthMethod
+        if ($null -ne $AuthMethodDetails) {
+            $AdditionalDetails += "$AuthMethod : $AuthMethodDetails"
+        }
+    }
+    #To remove duplicate authentication methods
+    $AuthenticationMethod = $AuthenticationMethod | Sort-Object | Get-Unique
+    #    $AuthenticationMethods = $AuthenticationMethod -join ","
+    $AdditionalDetail = $AdditionalDetails -join ", "
+
+    #Determine MFA status
+    [array]$MFAMethods = ("Fido2", "PhoneAuthentication", "PasswordlessMSAuthenticator", "AuthenticatorApp", "WindowsHelloForBusiness", "SoftwareOath")
+    foreach ($MFAMethod in $MFAMethods) { if ($AuthenticationMethod -contains $MFAMethod) { $MFAStatus = "Enabled"; break } }
+
     # build result object
     $userHash = $null
     $userHash = @{
-        'UserPrincipalName' = $MGUser.userPrincipalName
-        'DisplayName'       = $MGUser.DisplayName
-        'Sign-In'           = $MGUserEnabled
-        'Department'        = $MGUser.Department
-        'Title'             = $MGUser.JobTitle
-        'PasswordAge'       = $MGUserPasswordAge
-        #        'MailboxType'         = $MailboxType
-        #        'MailboxCreated'      = $MailboxCreationDateTime
-        #        'MailboxLastLogon'    = $MailboxLastLogonDateTime
-        #        'MailboxInactiveDays' = $MailboxInactiveDays
-        'Licenses'          = $MGUserLicenseProductNames
-        'Roles'             = $MGUserRoles
-        'Manager'           = $MGUserManager
+        'UserPrincipalName'      = $MGUser.userPrincipalName
+        'DisplayName'            = $MGUser.DisplayName
+        'Sign-In'                = $MGUserEnabled
+        'Department'             = $MGUser.Department
+        'Title'                  = $MGUser.JobTitle
+        'PasswordAge'            = $MGUserPasswordAge
+        'Licenses'               = $MGUserLicenseProductNames
+        'Roles'                  = $MGUserRoles
+        'Manager'                = $MGUserManager
+#        'AuthMethods'        = $AuthenticationMethods
+        'MFA_Status'             = $MFAStatus
+        'MFA_Phone'              = $MFAPhone
+        'MS_Authenticator'       = $MicrosoftAuthenticatorDevice
+        '3P_Authenticator'       = $Is3rdPartyAuthenticatorUsed
+        'MFA_Additional_Details' = $AdditionalDetail 
     }
     $userObject = $null
     $userObject = New-Object PSObject -Property $userHash
@@ -212,7 +286,7 @@ Write-Progress -Activity $ProgressActivity -Completed
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, Licenses, Roles, Manager | Sort-Object -Property UserPrincipalName | Export-Excel `
+$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, Licenses, Roles, Manager, MFA_Status, MFA_Phone, MS_Authenticator, 3P_Authenticator, MFA_Additional_Details | Sort-Object -Property UserPrincipalName | Export-Excel `
     -Path $XLSreport `
     -WorkSheetname "365 Users" `
     -ClearSheet `
@@ -341,7 +415,13 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
         $ProgressOperation = "Retrieving group membership data for $DisplayName."
         $ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
         Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
-        Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object { [pscustomobject]@{GroupName = $MGGroup.DisplayName; Name = $_.additionalproperties['displayName']; userPrincipalName = $_.additionalproperties['userPrincipalName'] } } 
+        Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object {
+            [pscustomobject]@{
+                GroupName         = $MGGroup.DisplayName
+                Name              = $_.additionalproperties['displayName']
+                userPrincipalName = $_.additionalproperties['userPrincipalName'] 
+            }
+        } 
     }
     Write-Progress -Activity $ProgressActivity -Completed
 
