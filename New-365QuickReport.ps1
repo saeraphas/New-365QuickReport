@@ -110,7 +110,7 @@ try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
+try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit } 
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
