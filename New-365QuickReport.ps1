@@ -82,7 +82,8 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
 }
 
 #Check GitHub for a modified version
-If (!($SkipUpdateCheck)) { CheckForUpdates("https://raw.githubusercontent.com/saeraphas/New-365QuickReport/main/New-365QuickReport.ps1") }
+# this doesn't work any more and I have no idea why
+#If (!($SkipUpdateCheck)) { CheckForUpdates("https://raw.githubusercontent.com/saeraphas/New-365QuickReport/main/New-365QuickReport.ps1") }
 
 #prerequisite modules and minimum versions as embedded CSV
 $PrerequisiteModulesTable = @'
