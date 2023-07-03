@@ -111,7 +111,7 @@ try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
+try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
@@ -421,6 +421,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 				GroupName         = $MGGroup.DisplayName
 				Name              = $_.additionalproperties['displayName']
 				userPrincipalName = $_.additionalproperties['userPrincipalName']
+				Email             = $_.additionalproperties['mail']
 			}
 		}
 	}
@@ -429,7 +430,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	$ProgressActivity = "Building Excel report."
 	$ProgressOperation = "Exporting to Excel."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-	$365GroupReportObject | Select-Object GroupName, Name, userPrincipalName | Sort-Object -Property GroupName | Export-Excel `
+	$365GroupReportObject | Select-Object GroupName, Name, userPrincipalName, Email | Sort-Object -Property GroupName | Export-Excel `
 		-Path $XLSreport `
 		-WorkSheetname "365 Group Memberships" `
 		-ClearSheet `
