@@ -330,7 +330,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 		#these $Mailbox properties require the ExchangeOnlineManagement module
 		$userPrincipalName = $_.UserPrincipalName
 		$MailboxCreationDateTime = $_.WhenCreated
-		$MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $userPrincipalName).lastlogontime
+		$MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $_.guid).lastlogontime
 		$MailboxType = $_.RecipientTypeDetails
 
 		#these properties reference the corresponding 365 user
