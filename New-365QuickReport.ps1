@@ -79,6 +79,7 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
 			try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
 		}
 	}
+	Write-Progress -Activity $ProgressActivity -Completed
 }
 
 #Check GitHub for a modified version
@@ -444,3 +445,31 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 #Clean up session
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
 Disconnect-MgGraph | Out-Null
+
+#quick and dirty report summary
+$report = $XLSreport
+
+$usersdata = Import-Excel $report -WorkSheetName "365 Users"
+$mailboxdata = Import-Excel $report -WorkSheetName "365 Mailboxes"
+
+$EnabledAdminsWithNoMFA = $usersdata | Where-Object {$_.'Sign-In' -eq "allowed" -and $_.'Roles' -like "*Administrator" -and $_.'MFA_Status' -ne "Enabled"}
+$EnabledAdminsWithSignInBlocked = $usersdata | Where-Object {$_.'Sign-In' -eq "blocked" -and $_.'Roles' -like "*Administrator"}
+$EnabledLicensedUsersWithNoMFA = $usersdata | Where-Object {$_.'Sign-In' -eq "allowed" -and $_.'Licenses' -ne "none" -and $_.'MFA_Status' -ne "Enabled"}
+$DisabledLicensedUsersWithLicenses = $usersdata | Where-Object {$_.'Sign-In' -eq "allowed" -and $_.'Licenses' -ne "none" -and $_.'MFA_Status' -ne "Enabled"}
+$UnlicensedUsers = $usersdata | Where-Object {$_.'Licenses' -eq "none" -and -not ($_.'Roles' -like "*Administrator")}
+
+$SharedMailboxWithLicense = $mailboxdata | Where-Object {$_.'MailboxType' -eq "SharedMailbox" -and $_.'Licensed' -eq "yes"}
+$InactiveSharedMailbox = $mailboxdata | Where-Object {$_.'MailboxType' -eq "SharedMailbox" -and $_.'MailboxInactiveDays' -ge 30}
+$InactiveLicensedMailbox = $mailboxdata | Where-Object {$_.'MailboxType' -eq "UserMailbox" -and $_.'Licensed' -eq "yes" -and $_.'MailboxInactiveDays' -ge 30}
+
+Write-Output "Counted $($EnabledAdminsWithNoMFA.count) admins with MFA not enabled."
+Write-Output "Counted $($EnabledAdminsWithSignInBlocked.count) admins with Sign-In blocked."
+Write-Output "Counted $($EnabledLicensedUsersWithNoMFA.count) users with license and MFA not enabled."
+Write-Output "Counted $($DisabledLicensedUsersWithLicenses.count) users with license and Sign-In blocked."
+Write-Output "Counted $($UnlicensedUsers.count) users with no license."
+
+Write-Output "Counted $($SharedMailboxWithLicense.count) shared mailboxes with license."
+Write-Output "Counted $($InactiveSharedMailbox.count) shared mailboxes with 30d+ inactivity."
+Write-Output "Counted $($InactiveLicensedMailbox.count) licensed mailboxes with 30d+ inactivity."
+
+Write-Output "Finished."
