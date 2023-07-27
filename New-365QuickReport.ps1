@@ -24,43 +24,7 @@ Param (
 	[switch] $SkipSKUConversion
 )
 
-function CheckForUpdates($GitHubURI) {
-	IF ($($myInvocation.ScriptName).Length -eq 0) { Write-Verbose "No local script path exists, skipping cloud version comparison." } else {
-		$LocalScriptPath = $myInvocation.ScriptName
-		$LocalScriptContent = Get-Content $LocalScriptPath
-		$CloudScriptPath = $GitHubURI
-		$CloudScriptContent = (Invoke-WebRequest -UseBasicParsing $CloudScriptPath).Content
-
-		$localstringAsStream = [System.IO.MemoryStream]::new()
-		$writer = [System.IO.StreamWriter]::new($localstringAsStream)
-		$writer.write($LocalScriptContent)
-		$writer.Flush()
-		$localstringAsStream.Position = 0
-		$LocalScriptHash = (Get-FileHash -InputStream $localstringAsStream -Algorithm SHA256).Hash
-
-		$cloudstringAsStream = [System.IO.MemoryStream]::new()
-		$writer = [System.IO.StreamWriter]::new($cloudstringAsStream)
-		$writer.write($CloudScriptContent)
-		$writer.Flush()
-		$cloudstringAsStream.Position = 0
-		$CloudScriptHash = (Get-FileHash -InputStream $cloudstringAsStream -Algorithm SHA256).Hash
-
-		Write-Verbose "Local Script Path: $LocalScriptPath"
-		Write-Verbose "Local Script Hash: $LocalScriptHash"
-		Write-Verbose "Cloud Script Hash: $CloudScriptHash"
-
-		If ($LocalScriptHash -ne $CloudScriptHash) {
-			$MismatchWarning = "The running script does not match the current version on GitHub."
-			Write-Warning $MismatchWarning
-			$MismatchPrompt = 'Enter "y" to switch to the GitHub version now, or any other key to continue using the local version.'
-			$Answer = Read-Host $MismatchPrompt
-			If ($Answer -eq "y") {
-				Write-Verbose "Switching to GitHub version."
-				Invoke-Expression $CloudScriptContent; exit
-			}
-		}
-	}
-}
+$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 function CheckPrerequisites($PrerequisiteModulesTable) {
 	$PrerequisiteModules = $PrerequisiteModulesTable | ConvertFrom-Csv
@@ -81,10 +45,6 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
 	}
 	Write-Progress -Activity $ProgressActivity -Completed
 }
-
-#Check GitHub for a modified version
-# this doesn't work any more and I have no idea why
-#If (!($SkipUpdateCheck)) { CheckForUpdates("https://raw.githubusercontent.com/saeraphas/New-365QuickReport/main/New-365QuickReport.ps1") }
 
 #prerequisite modules and minimum versions as embedded CSV
 $PrerequisiteModulesTable = @'
@@ -310,7 +270,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 	$ProgressOperation = "Retrieving mailbox list."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-	$Mailboxes = Get-Mailbox -ResultSize Unlimited | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" }
+	$Mailboxes = Get-EXOMailbox -RecipientTypeDetails UserMailbox, SharedMailbox -ResultSize Unlimited -Properties UserPrincipalName, DisplayName, RecipientTypeDetails, WhenMailboxCreated, LitigationHoldEnabled, GUID, Identity | Where-Object { $_.DisplayName -notlike "Discovery Search Mailbox" } | Select-Object -Property UserPrincipalName, DisplayName, RecipientTypeDetails, WhenMailboxCreated, LitigationHoldEnabled, GUID, Identity
 	If (!($Mailboxes.count -gt 0)) {
 		Write-Verbose "No Mailboxes."
 		Write-Progress -Activity $ProgressActivity -Completed
@@ -319,7 +279,13 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 }
 If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 	#construct report output object
+	$ProgressActivity = "Retrieving 365 mailbox permissions. This may take a while."
+	$ProgressOperation = "Retrieving mailbox permissions."
+	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+	$MailboxPermissions = $Mailboxes | Get-EXOMailboxPermission | Where-Object { $_.User -ne 'NT AUTHORITY\SELF' }
+
 	$365MailboxReportObject = @()
+
 	$MailboxProgressBarCounter = 0
 	$Mailboxes | ForEach-Object {
 		$MailboxProgressBarCounter++
@@ -330,9 +296,17 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 
 		#these $Mailbox properties require the ExchangeOnlineManagement module
 		$userPrincipalName = $_.UserPrincipalName
-		$MailboxCreationDateTime = $_.WhenCreated
-		$MailboxLastLogonDateTime = (Get-MailboxStatistics -Identity $_.guid).lastlogontime
+		$identity = $_.Identity
+		$MailboxCreationDateTime = $_.WhenMailboxCreated
+		$MailboxLastLogonDateTime = (Get-EXOMailboxStatistics -Identity $_.guid -Properties lastlogontime).lastlogontime
 		$MailboxType = $_.RecipientTypeDetails
+
+		#these properties reference the mailbox permissions
+		[array]$Delegates = @()
+		$Delegates = $MailboxPermissions | Where-Object { $_.Identity -eq $identity } | Select-Object -ExpandProperty 'User'
+		if ( $Delegates.count -ge 1 ) { $Delegates = $Delegates.Split(",") } else { $Delegates = "none" }
+		$DelegateString = $Delegates -join (",")
+		$DelegateCount = $($Delegates | Where-Object { $_ -ne "none" }).count
 
 		#these properties reference the corresponding 365 user
 		$MailboxUser = $365UserReportObject | Where-Object -Property Userprincipalname -eq $userPrincipalName
@@ -370,6 +344,8 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 			'LitigationHold'      = $MailboxLitigationHold
 			#        'Roles'               = $MGUserRoles
 			#        'Manager'             = $MGUserManager
+			'DelegateCount'       = $DelegateCount
+			'Delegates'           = $DelegateString
 		}
 		$mailboxObject = $null
 		$mailboxObject = New-Object PSObject -Property $mailboxHash
@@ -380,7 +356,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 	$ProgressActivity = "Building Excel report."
 	$ProgressOperation = "Exporting to Excel."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-	$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, LitigationHold | Sort-Object -Property UserPrincipalName | Export-Excel `
+	$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, LitigationHold, DelegateCount, Delegates | Sort-Object -Property UserPrincipalName | Export-Excel `
 		-Path $XLSreport `
 		-WorkSheetname "365 Mailboxes" `
 		-ClearSheet `
@@ -446,4 +422,6 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
 Disconnect-MgGraph | Out-Null
 
-Write-Output "Finished."
+Write-Output "Report output is at $XLSreport."
+Write-Output "Finished in $($Stopwatch.Elapsed.TotalSeconds) seconds."
+$Stopwatch.Stop()
