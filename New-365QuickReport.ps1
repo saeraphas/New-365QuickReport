@@ -94,7 +94,7 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 #Get the 365 user list using Microsoft Graph
 #construct report output object
 $365UserReportObject = @()
-$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Where-Object { $_.userprincipalname -notmatch '#EXT#@' } | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
 $MGUserProgressBarCounter = 0
 Foreach ($MGUser in $MGUsers) {
 	$MGUserProgressBarCounter++
