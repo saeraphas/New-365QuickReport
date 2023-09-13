@@ -21,7 +21,8 @@ Param (
 	[switch] $SkipUpdateCheck,
 	[switch] $SkipMailboxReport,
 	[switch] $SkipGroupReport,
-	[switch] $SkipSKUConversion
+	[switch] $SkipSKUConversion,
+	[switch] $GCCHigh
 )
 
 $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -36,11 +37,11 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
 		$minimumVersion = $($PrerequisiteModule.minimumversion)
 		$installedversion = $(Get-Module -ListAvailable -Name $moduleName | Select-Object -first 1).version
 		If (!($installedversion)) {
-			try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
+			try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -MinimumVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
 		}
 		elseif ([version]$installedversion -lt [version]$minimumversion) {
 			try { Uninstall-Module $moduleName -AllVersions } catch { Write-Error "An error occurred removing $moduleName. You may need to manually remove old versions using admin privileges." }
-			try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -RequiredVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
+			try { Install-Module $moduleName -Repository PSGallery -AllowClobber -scope CurrentUser -Force -MinimumVersion $minimumversion } catch { Write-Error "An error occurred installing $moduleName." }
 		}
 	}
 	Write-Progress -Activity $ProgressActivity -Completed
@@ -68,11 +69,14 @@ try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI 
 $ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
 $ProgressOperation = "1 of 2 - Connecting to Exchange Online."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 0
-try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
+If ($GCCHigh){ $ExchangeEnvironmentName = "O365USGovGCCHigh" } else { $ExchangeEnvironmentName = "O365Default" }
+try { Connect-ExchangeOnline -ExchangeEnvironmentName $ExchangeEnvironmentName -ShowBanner:$false | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-try { Connect-MgGraph -Scopes "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All" | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
+$Scopes = "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All"
+If ($GCCHigh){ $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "USGovDoD" }
+try { Connect-MgGraph -Environment $MSGraphEnvironmentName -Scopes $Scopes | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
 Write-Progress -Activity $ProgressActivity -Completed
 
 #define variables for file system paths
