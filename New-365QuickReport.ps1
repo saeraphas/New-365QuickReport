@@ -75,7 +75,7 @@ try { Connect-ExchangeOnline -ExchangeEnvironmentName $ExchangeEnvironmentName -
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
 $Scopes = "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All"
-If ($GCCHigh){ $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "USGovDoD" }
+If ($GCCHigh){ $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "Global" }
 try { Connect-MgGraph -Environment $MSGraphEnvironmentName -Scopes $Scopes | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
 Write-Progress -Activity $ProgressActivity -Completed
 
