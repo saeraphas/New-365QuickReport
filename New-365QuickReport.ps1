@@ -69,13 +69,13 @@ try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI 
 $ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
 $ProgressOperation = "1 of 2 - Connecting to Exchange Online."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 0
-If ($GCCHigh){ $ExchangeEnvironmentName = "O365USGovGCCHigh" } else { $ExchangeEnvironmentName = "O365Default" }
+If ($GCCHigh) { $ExchangeEnvironmentName = "O365USGovGCCHigh" } else { $ExchangeEnvironmentName = "O365Default" }
 try { Connect-ExchangeOnline -ExchangeEnvironmentName $ExchangeEnvironmentName -ShowBanner:$false | Out-Null } catch { write-error "Error connecting to Exchange Online. Exiting."; exit }
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
 $Scopes = "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All"
-If ($GCCHigh){ $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "Global" }
+If ($GCCHigh) { $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "Global" }
 try { Connect-MgGraph -Environment $MSGraphEnvironmentName -Scopes $Scopes | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
 Write-Progress -Activity $ProgressActivity -Completed
 
@@ -98,7 +98,7 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 #Get the 365 user list using Microsoft Graph
 #construct report output object
 $365UserReportObject = @()
-$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Where-Object { $_.userprincipalname -notmatch '#EXT#@' } | Select-Object ID, UserPrincipalName, AccountEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Where-Object { $_.userprincipalname -notmatch '#EXT#@' } | Select-Object ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
 $MGUserProgressBarCounter = 0
 Foreach ($MGUser in $MGUsers) {
 	$MGUserProgressBarCounter++
@@ -230,6 +230,7 @@ Foreach ($MGUser in $MGUsers) {
 		'UserPrincipalName'      = $MGUser.userPrincipalName
 		'DisplayName'            = $MGUser.DisplayName
 		'Sign-In'                = $MGUserEnabled
+		'Synced'                 = $MGUser.OnPremisesSyncEnabled
 		'Department'             = $MGUser.Department
 		'Title'                  = $MGUser.JobTitle
 		'PasswordAge'            = $MGUserPasswordAge
@@ -252,7 +253,7 @@ Write-Progress -Activity $ProgressActivity -Completed
 $ProgressActivity = "Building Excel report."
 $ProgressOperation = "Exporting to Excel."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Department, Title, PasswordAge, Licenses, Roles, Manager, MFA_Status, MFA_Phone, MS_Authenticator, 3P_Authenticator, MFA_Additional_Details | Sort-Object -Property UserPrincipalName | Export-Excel `
+$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Synced, Department, Title, PasswordAge, Licenses, Roles, Manager, MFA_Status, MFA_Phone, MS_Authenticator, 3P_Authenticator, MFA_Additional_Details | Sort-Object -Property UserPrincipalName | Export-Excel `
 	-Path $XLSreport `
 	-WorkSheetname "365 Users" `
 	-ClearSheet `
@@ -360,7 +361,7 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 	$ProgressActivity = "Building Excel report."
 	$ProgressOperation = "Exporting to Excel."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-	$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, LitigationHold, DelegateCount, Delegates | Sort-Object -Property UserPrincipalName | Export-Excel `
+	$365MailboxReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Synced, Licensed, MailboxType, MailboxCreated, MailboxLastLogon, MailboxInactiveDays, LitigationHold, DelegateCount, Delegates | Sort-Object -Property UserPrincipalName | Export-Excel `
 		-Path $XLSreport `
 		-WorkSheetname "365 Mailboxes" `
 		-ClearSheet `

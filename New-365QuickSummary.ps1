@@ -36,6 +36,13 @@ if (!($reportExists)) { Write-Warning "Specified report file $ReportFile does no
     Write-Output "Counted $($DisabledAdmins.count) admins with Sign-In blocked."
     $DisabledAdmins | Select-Object -Property UserPrincipalName,DisplayName,Roles | Format-Table
 
+    [array]$SyncedUsers = @()
+    $SyncedUsers = $usersdata | Where-Object { $_.'Synced' -eq "true" }
+    $SyncedUsersPercent = $SyncedUsers.Count / ($usersdata).count * 100
+    $SyncedUsersPercent = [math]::Round($SyncedUsersPercent)
+    Write-Output "Counted $($SyncedUsers.count)/$(($usersdata).count) ($SyncedUsersPercent%) users synced with an AD domain."
+    #$SyncedUsers | Select-Object -Property UserPrincipalName,DisplayName,Synced | Format-Table
+
     [array]$EnabledLicensedUsersWithNoMFA = @()
     $EnabledLicensedUsersWithNoMFA = $usersdata | Where-Object { $_.'Sign-In' -eq "allowed" -and $_.'Licenses' -ne "none" -and $_.'MFA_Status' -ne "Enabled" }
     Write-Output "Counted $($EnabledLicensedUsersWithNoMFA.count) users with license and MFA not enabled."
