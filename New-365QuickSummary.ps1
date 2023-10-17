@@ -77,5 +77,12 @@ if (!($reportExists)) { Write-Warning "Specified report file $ReportFile does no
     Write-Output "Counted $($InactiveLicensedMailbox.count) licensed mailboxes with 30d+ inactivity."
     $InactiveLicensedMailbox | Select-Object -Property UserPrincipalName,DisplayName,MailboxLastLogon | Format-Table
 
+    [array]$MailboxWithLitigationHold = @()
+    $MailboxWithLitigationHold = $mailboxdata | Where-Object { $_.'LitigationHold' -eq "yes" }
+    $MailboxWithLitigationHoldPercent = $MailboxWithLitigationHold.Count / ($mailboxdata).count * 100
+    $MailboxWithLitigationHoldPercent = [math]::Round($MailboxWithLitigationHoldPercent)
+    Write-Output "Counted $($MailboxWithLitigationHold.count)/$(($mailboxdata).count) ($MailboxWithLitigationHoldPercent%) mailboxes with Litigation Holds applied."
+    #$MailboxWithLitigationHold | Select-Object -Property UserPrincipalName,DisplayName,LitigationHold | Format-Table
+
     Write-Output "Finished."
 }
