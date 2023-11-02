@@ -398,7 +398,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 		$ProgressOperation = "Retrieving group membership data for $DisplayName."
 		$ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
 		Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
-		Get-MgGroupMember -GroupID $MGGroup.id | ForEach-Object {
+		Get-MgGroupMember -GroupID $MGGroup.id -all | ForEach-Object {
 			[pscustomobject]@{
 				GroupName         = $MGGroup.DisplayName
 				Name              = $_.additionalproperties['displayName']
