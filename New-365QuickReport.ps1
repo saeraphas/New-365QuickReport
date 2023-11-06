@@ -19,6 +19,7 @@
 Param (
 	[Parameter(ValueFromPipelineByPropertyName)]
 	[switch] $SkipUpdateCheck,
+	[switch] $SkipUserReport,
 	[switch] $SkipMailboxReport,
 	[switch] $SkipGroupReport,
 	[switch] $SkipSKUConversion,
@@ -66,7 +67,7 @@ $MicrosoftDocumentationDownloadError = "An error occurred while downloading the 
 try { $MicrosoftProducts = Invoke-RestMethod -Uri $MicrosoftDocumentationCSVURI -Method Get | ConvertFrom-CSV | Select-Object String_ID, Product_Display_Name, GUID -Unique } catch { Write-Warning $MicrosoftDocumentationDownloadError; $SkipSKUConversion = $true }
 
 #connect to microsoft services
-$ProgressActivity = "Connecting to Microsoft services. You will be prompted multiple times."
+$ProgressActivity = "Connecting to Microsoft services. You will be prompted twice."
 $ProgressOperation = "1 of 2 - Connecting to Exchange Online."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 0
 If ($GCCHigh) { $ExchangeEnvironmentName = "O365USGovGCCHigh" } else { $ExchangeEnvironmentName = "O365Default" }
@@ -90,6 +91,8 @@ $XLSreport = "$ReportPath\$TenantString-report-$DateString.xlsx"
 
 #Get all role definitions from Microsoft Graph (for display names) #Thanks, Troy
 $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
+
+If ($SkipUserReport) { Write-Verbose "Skipping user report." ; $SkipMailboxReport = $true } else {
 
 $ProgressActivity = "Retrieving 365 user account data."
 $ProgressOperation = "Retrieving user list."
@@ -267,6 +270,7 @@ $365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Sy
 	New-ConditionalText "Global Administrator" -BackgroundColor Yellow
 )
 Write-Progress -Activity $ProgressActivity -Completed
+}
 
 #check whether mailbox report skip is set by parameter
 If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
@@ -383,7 +387,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	$ProgressOperation = "Retrieving group list."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-	$MGGroupList = Get-MgGroup
+	$MGGroupList = Get-MgGroup -all
 	If (!($MGGroupList.count -gt 0)) {
 		Write-Verbose "No Groups."
 		Write-Progress -Activity $ProgressActivity -Completed
@@ -398,12 +402,21 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 		$ProgressOperation = "Retrieving group membership data for $DisplayName."
 		$ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
 		Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+		$GroupOwner = Get-MgGroupOwner -GroupID $MGGroup.Id | Select-Object -ExpandProperty Id
+		if ($null -eq $GroupOwner) {$GroupOwnerUPN = "not set"} else {
+			try {$GroupOwnerUPN = Get-MgUser -UserID $GroupOwner | Select-Object -ExpandProperty UserPrincipalName } catch { $GroupOwnerUPN = "other" }
+		}
+		$GroupSynced = $MGGroup.OnPremisesSyncEnabled
+		$GroupDescription = $MGGroup.Description
 		Get-MgGroupMember -GroupID $MGGroup.id -all | ForEach-Object {
 			[pscustomobject]@{
-				GroupName         = $MGGroup.DisplayName
-				Name              = $_.additionalproperties['displayName']
-				userPrincipalName = $_.additionalproperties['userPrincipalName']
-				Email             = $_.additionalproperties['mail']
+				GroupName   = $MGGroup.DisplayName
+				GroupOwner  = $GroupOwnerUPN
+				ADSynced    = $GroupSynced
+				Description = $GroupDescription
+				MemberName  = $_.additionalproperties['displayName']
+				MemberUPN   = $_.additionalproperties['userPrincipalName']
+				MemberEmail = $_.additionalproperties['mail']
 			}
 		}
 	}
@@ -412,7 +425,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	$ProgressActivity = "Building Excel report."
 	$ProgressOperation = "Exporting to Excel."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-	$365GroupReportObject | Select-Object GroupName, Name, userPrincipalName, Email | Sort-Object -Property GroupName | Export-Excel `
+	$365GroupReportObject | Select-Object GroupName, GroupOwner, ADSynced, Description, MemberName, MemberUPN, MemberEmail | Sort-Object -Property GroupName | Export-Excel `
 		-Path $XLSreport `
 		-WorkSheetname "365 Group Memberships" `
 		-ClearSheet `
