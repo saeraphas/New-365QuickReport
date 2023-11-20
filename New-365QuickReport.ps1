@@ -436,6 +436,39 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	Write-Progress -Activity $ProgressActivity -Completed
 }
 
+#get audit log settings
+$Step = "Exchange Online Audit Log"
+$ProgressActivity = "Retrieving $Step data."
+$ProgressOperation = "Retrieving $Step list."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$EOAuditLogConfig = Get-AdminAuditLogConfig | Select-Object -Property UnifiedAuditLogIngestionEnabled, AdminAuditLogAgeLimit
+$EOAuditLogConfig | Export-Excel `
+		-Path $XLSreport `
+		-WorkSheetname "$Step" `
+		-ClearSheet `
+		-BoldTopRow `
+		-Autosize `
+		-FreezePane 2 `
+		-Autofilter
+Write-Progress -Activity $ProgressActivity -Completed
+
+#get transport rules (check for external banner)
+$Step = "Exchange Online Transport Rules"
+$ProgressActivity = "Retrieving $Step data."
+$ProgressOperation = "Retrieving $Step list."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$EOTransportRules = Get-TransportRule | Select-Object -Property Name, State, Priority, Description | Sort-Object -Property Priority
+$EOTransportRules | Export-Excel `
+		-Path $XLSreport `
+		-WorkSheetname "$Step" `
+		-ClearSheet `
+		-BoldTopRow `
+		-Autosize `
+		-FreezePane 2 `
+		-Autofilter
+Write-Progress -Activity $ProgressActivity -Completed
+
+
 #Clean up session
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
 Disconnect-MgGraph | Out-Null
