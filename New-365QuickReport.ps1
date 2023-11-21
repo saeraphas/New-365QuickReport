@@ -48,6 +48,27 @@ function CheckPrerequisites($PrerequisiteModulesTable) {
 	Write-Progress -Activity $ProgressActivity -Completed
 }
 
+function New-Report() {
+	Param($ReportName, $ReportData, $ReportOutput)
+	Write-Progress -Id 0 -Activity "Collecting $ReportName data." -CurrentOperation "Building Report."
+	if (!$reportdata) {
+		$reportdata = @()
+		$row = New-Object PSObject
+		$row | Add-Member -MemberType NoteProperty -Name "Result" -Value "This report is empty."
+		$reportdata += $row
+	}
+	$reportdata | Export-Excel `
+		-Path $ReportOutput `
+		-WorkSheetname "$ReportName" `
+		-ClearSheet `
+		-BoldTopRow `
+		-Autosize `
+		-FreezePane 2 `
+		-Autofilter
+	$reportdata = $null
+	Write-Progress -Id 0 -Activity "Collecting $ReportName data." -Completed
+}
+
 #prerequisite modules and minimum versions as embedded CSV
 $PrerequisiteModulesTable = @'
 Name,MinimumVersion
@@ -94,182 +115,182 @@ $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
 
 If ($SkipUserReport) { Write-Verbose "Skipping user report." ; $SkipMailboxReport = $true } else {
 
-$ProgressActivity = "Retrieving 365 user account data."
-$ProgressOperation = "Retrieving user list."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+	$ProgressActivity = "Retrieving 365 user account data."
+	$ProgressOperation = "Retrieving user list."
+	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
-#Get the 365 user list using Microsoft Graph
-#construct report output object
-$365UserReportObject = @()
-$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Where-Object { $_.userprincipalname -notmatch '#EXT#@' } | Select-Object ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
-$MGUserProgressBarCounter = 0
-Foreach ($MGUser in $MGUsers) {
-	$MGUserProgressBarCounter++
-	$DisplayName = $MGUser.DisplayName
-	$ProgressOperation = "Retrieving user data for $DisplayName."
-	$ProgressPercent = ($MGUserProgressBarCounter / $($MGUsers).count) * 100
-	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
+	#Get the 365 user list using Microsoft Graph
+	#construct report output object
+	$365UserReportObject = @()
+	$MGUsers = Get-MGUser -All -Property ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager | Where-Object { $_.userprincipalname -notmatch '#EXT#@' } | Select-Object ID, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled, DisplayName, Department, JobTitle, Mail, CreatedDateTime, LastPasswordChangeDateTime, AssignedLicenses, Manager
+	$MGUserProgressBarCounter = 0
+	Foreach ($MGUser in $MGUsers) {
+		$MGUserProgressBarCounter++
+		$DisplayName = $MGUser.DisplayName
+		$ProgressOperation = "Retrieving user data for $DisplayName."
+		$ProgressPercent = ($MGUserProgressBarCounter / $($MGUsers).count) * 100
+		Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
 
-	$MGUserEnabled = $null
-	if ($MGUser.AccountEnabled -eq $true) { $MGUserEnabled = "allowed" } else { $MGUserEnabled = "blocked" }
+		$MGUserEnabled = $null
+		if ($MGUser.AccountEnabled -eq $true) { $MGUserEnabled = "allowed" } else { $MGUserEnabled = "blocked" }
 
-	$MGUserPasswordAge = (New-TimeSpan -Start $MGUser.LastPasswordChangeDateTime).Days
+		$MGUserPasswordAge = (New-TimeSpan -Start $MGUser.LastPasswordChangeDateTime).Days
 
-	# slow
-	# $MGUserLicenses = $(get-mguserlicensedetail -userid $($MGUser).id).SkuPartNumber
-	# #convert SKUs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
-	# IF ($SkipSKUConversion) { $MGUserLicenseProductNames = $MGUserLicenses -join "," } else {
-	#     $MGUserLicenseProductNameArray = @()
-	#     if ($MGUserLicenses.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
-	#         foreach ($License in $MGUserLicenses) {
-	#             $ProductName = $($MicrosoftProducts | Where-Object { $_.String_ID -eq $License }).Product_Display_Name
-	#             if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
-	#         }
-	#         $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
-	#     }
-	# }
+		# slow
+		# $MGUserLicenses = $(get-mguserlicensedetail -userid $($MGUser).id).SkuPartNumber
+		# #convert SKUs to Product Names unless bypassed or downloading the CSV from documentation failed earlier
+		# IF ($SkipSKUConversion) { $MGUserLicenseProductNames = $MGUserLicenses -join "," } else {
+		#     $MGUserLicenseProductNameArray = @()
+		#     if ($MGUserLicenses.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
+		#         foreach ($License in $MGUserLicenses) {
+		#             $ProductName = $($MicrosoftProducts | Where-Object { $_.String_ID -eq $License }).Product_Display_Name
+		#             if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
+		#         }
+		#         $MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
+		#     }
+		# }
 
-	$MGUserLicenseGUIDs = $MGUser.AssignedLicenses
-	#convert GUIDs to Product Names
-	$MGUserLicenseProductNameArray = @()
-	if ($MGUserLicenseGUIDs.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
-		foreach ($License in $MGUserLicenseGUIDs) {
-			$License = $($License | Select-Object -ExpandProperty SkuId).trim('{}') #the license GUIDs have brackets, but the reference list doesn't
-			$ProductName = $($MicrosoftProducts | Where-Object { $_.GUID -eq $License }).Product_Display_Name
-			if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
+		$MGUserLicenseGUIDs = $MGUser.AssignedLicenses
+		#convert GUIDs to Product Names
+		$MGUserLicenseProductNameArray = @()
+		if ($MGUserLicenseGUIDs.count -eq 0) { $MGUserLicenseProductNames = "none" } else {
+			foreach ($License in $MGUserLicenseGUIDs) {
+				$License = $($License | Select-Object -ExpandProperty SkuId).trim('{}') #the license GUIDs have brackets, but the reference list doesn't
+				$ProductName = $($MicrosoftProducts | Where-Object { $_.GUID -eq $License }).Product_Display_Name
+				if (!($ProductName)) { $MGUserLicenseProductNameArray += $License } else { $MGUserLicenseProductNameArray += $ProductName }
+			}
+			$MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
 		}
-		$MGUserLicenseProductNames = $MGUserLicenseProductNameArray -join ","
-	}
 
-	#Get user's role assignments from Graph API #Thanks, Troy
-	$MGUserRoleAssignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '$($MGUser.ID)'" | Select-Object RoleDefinitionId
-	$MGUserRoleArray = @()
-	#Match role definition IDs to display names #Thanks, Troy
-	if ($MGUserRoleAssignments.count -eq 0) { $MGUserRoles = "none" } else {
-		foreach ($RoleAssignment in $MGUserRoleAssignments) {
-			$MGUserRoleArray += ($roleDefinitions | Where-Object { $_.Id -eq $RoleAssignment.RoleDefinitionId }).DisplayName
+		#Get user's role assignments from Graph API #Thanks, Troy
+		$MGUserRoleAssignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '$($MGUser.ID)'" | Select-Object RoleDefinitionId
+		$MGUserRoleArray = @()
+		#Match role definition IDs to display names #Thanks, Troy
+		if ($MGUserRoleAssignments.count -eq 0) { $MGUserRoles = "none" } else {
+			foreach ($RoleAssignment in $MGUserRoleAssignments) {
+				$MGUserRoleArray += ($roleDefinitions | Where-Object { $_.Id -eq $RoleAssignment.RoleDefinitionId }).DisplayName
+			}
+			$MGUserRoles = $MGUserRoleArray -join ","
 		}
-		$MGUserRoles = $MGUserRoleArray -join ","
-	}
 
-	$MGUserManager = $null
-	$MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
+		$MGUserManager = $null
+		$MGUserManager = $(Get-MgUser -UserId $($MGUser).id -ExpandProperty manager | Select-Object @{Name = 'Manager'; Expression = { $_.Manager.AdditionalProperties.displayName } }).Manager
 
-	#Get MFA data
-	$MFAStatus = $null
-	$MFAPhone = $null
-	$MicrosoftAuthenticatorDevice = $null
-	$Is3rdPartyAuthenticatorUsed = $null
-	[array]$MFAData = Get-MgUserAuthenticationMethod -UserId $($MGUser).id
-	$AuthenticationMethod = @()
-	$AdditionalDetails = @()
+		#Get MFA data
+		$MFAStatus = $null
+		$MFAPhone = $null
+		$MicrosoftAuthenticatorDevice = $null
+		$Is3rdPartyAuthenticatorUsed = $null
+		[array]$MFAData = Get-MgUserAuthenticationMethod -UserId $($MGUser).id
+		$AuthenticationMethod = @()
+		$AdditionalDetails = @()
 
-	foreach ($MFA in $MFAData) {
-		Switch ($MFA.AdditionalProperties["@odata.type"]) {
-			"#microsoft.graph.passwordAuthenticationMethod" {
-				$AuthMethod = 'PasswordAuthentication'
-				$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
-			}
-			"#microsoft.graph.microsoftAuthenticatorAuthenticationMethod" {
-				# Microsoft Authenticator App
-				$AuthMethod = 'AuthenticatorApp'
-				$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
-				$MicrosoftAuthenticatorDevice = $MFA.AdditionalProperties["displayName"]
-			}
-			"#microsoft.graph.phoneAuthenticationMethod" {
-				# Phone authentication
-				$AuthMethod = 'PhoneAuthentication'
-				$AuthMethodDetails = $MFA.AdditionalProperties["phoneType", "phoneNumber"] -join ' '
-				$MFAPhone = $MFA.AdditionalProperties["phoneNumber"]
-			}
-			"#microsoft.graph.fido2AuthenticationMethod" {
-				# FIDO2 key
-				$AuthMethod = 'Fido2'
-				$AuthMethodDetails = $MFA.AdditionalProperties["model"]
-			}
-			"#microsoft.graph.windowsHelloForBusinessAuthenticationMethod" {
-				# Windows Hello
-				$AuthMethod = 'WindowsHelloForBusiness'
-				$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
-			}
-			"#microsoft.graph.emailAuthenticationMethod" {
-				# Email Authentication
-				$AuthMethod = 'EmailAuthentication'
-				$AuthMethodDetails = $MFA.AdditionalProperties["emailAddress"]
-			}
-			"microsoft.graph.temporaryAccessPassAuthenticationMethod" {
-				# Temporary Access pass
-				$AuthMethod = 'TemporaryAccessPass'
-				$AuthMethodDetails = 'Access pass lifetime (minutes): ' + $MFA.AdditionalProperties["lifetimeInMinutes"]
-			}
-			"#microsoft.graph.passwordlessMicrosoftAuthenticatorAuthenticationMethod" {
-				# Passwordless
-				$AuthMethod = 'PasswordlessMSAuthenticator'
-				$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
-			}
-			"#microsoft.graph.softwareOathAuthenticationMethod" {
-				$AuthMethod = 'SoftwareOath'
-				$Is3rdPartyAuthenticatorUsed = "True"
-			}
+		foreach ($MFA in $MFAData) {
+			Switch ($MFA.AdditionalProperties["@odata.type"]) {
+				"#microsoft.graph.passwordAuthenticationMethod" {
+					$AuthMethod = 'PasswordAuthentication'
+					$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
+				}
+				"#microsoft.graph.microsoftAuthenticatorAuthenticationMethod" {
+					# Microsoft Authenticator App
+					$AuthMethod = 'AuthenticatorApp'
+					$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
+					$MicrosoftAuthenticatorDevice = $MFA.AdditionalProperties["displayName"]
+				}
+				"#microsoft.graph.phoneAuthenticationMethod" {
+					# Phone authentication
+					$AuthMethod = 'PhoneAuthentication'
+					$AuthMethodDetails = $MFA.AdditionalProperties["phoneType", "phoneNumber"] -join ' '
+					$MFAPhone = $MFA.AdditionalProperties["phoneNumber"]
+				}
+				"#microsoft.graph.fido2AuthenticationMethod" {
+					# FIDO2 key
+					$AuthMethod = 'Fido2'
+					$AuthMethodDetails = $MFA.AdditionalProperties["model"]
+				}
+				"#microsoft.graph.windowsHelloForBusinessAuthenticationMethod" {
+					# Windows Hello
+					$AuthMethod = 'WindowsHelloForBusiness'
+					$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
+				}
+				"#microsoft.graph.emailAuthenticationMethod" {
+					# Email Authentication
+					$AuthMethod = 'EmailAuthentication'
+					$AuthMethodDetails = $MFA.AdditionalProperties["emailAddress"]
+				}
+				"microsoft.graph.temporaryAccessPassAuthenticationMethod" {
+					# Temporary Access pass
+					$AuthMethod = 'TemporaryAccessPass'
+					$AuthMethodDetails = 'Access pass lifetime (minutes): ' + $MFA.AdditionalProperties["lifetimeInMinutes"]
+				}
+				"#microsoft.graph.passwordlessMicrosoftAuthenticatorAuthenticationMethod" {
+					# Passwordless
+					$AuthMethod = 'PasswordlessMSAuthenticator'
+					$AuthMethodDetails = $MFA.AdditionalProperties["displayName"]
+				}
+				"#microsoft.graph.softwareOathAuthenticationMethod" {
+					$AuthMethod = 'SoftwareOath'
+					$Is3rdPartyAuthenticatorUsed = "True"
+				}
 
+			}
+			$AuthenticationMethod += $AuthMethod
+			if ($null -ne $AuthMethodDetails) {
+				$AdditionalDetails += "$AuthMethod : $AuthMethodDetails"
+			}
 		}
-		$AuthenticationMethod += $AuthMethod
-		if ($null -ne $AuthMethodDetails) {
-			$AdditionalDetails += "$AuthMethod : $AuthMethodDetails"
+		#To remove duplicate authentication methods
+		$AuthenticationMethod = $AuthenticationMethod | Sort-Object | Get-Unique
+		#    $AuthenticationMethods = $AuthenticationMethod -join ","
+		$AdditionalDetail = $AdditionalDetails -join ", "
+
+		#Determine MFA status
+		[array]$MFAMethods = ("Fido2", "PhoneAuthentication", "PasswordlessMSAuthenticator", "AuthenticatorApp", "WindowsHelloForBusiness", "SoftwareOath")
+		foreach ($MFAMethod in $MFAMethods) { if ($AuthenticationMethod -contains $MFAMethod) { $MFAStatus = "Enabled"; break } }
+
+		# build result object
+		$userHash = $null
+		$userHash = @{
+			'UserPrincipalName'      = $MGUser.userPrincipalName
+			'DisplayName'            = $MGUser.DisplayName
+			'Sign-In'                = $MGUserEnabled
+			'Synced'                 = $MGUser.OnPremisesSyncEnabled
+			'Department'             = $MGUser.Department
+			'Title'                  = $MGUser.JobTitle
+			'PasswordAge'            = $MGUserPasswordAge
+			'Licenses'               = $MGUserLicenseProductNames
+			'Roles'                  = $MGUserRoles
+			'Manager'                = $MGUserManager
+			#        'AuthMethods'        = $AuthenticationMethods
+			'MFA_Status'             = $MFAStatus
+			'MFA_Phone'              = $MFAPhone
+			'MS_Authenticator'       = $MicrosoftAuthenticatorDevice
+			'3P_Authenticator'       = $Is3rdPartyAuthenticatorUsed
+			'MFA_Additional_Details' = $AdditionalDetail
 		}
+		$userObject = $null
+		$userObject = New-Object PSObject -Property $userHash
+		$365UserReportObject += $userObject
 	}
-	#To remove duplicate authentication methods
-	$AuthenticationMethod = $AuthenticationMethod | Sort-Object | Get-Unique
-	#    $AuthenticationMethods = $AuthenticationMethod -join ","
-	$AdditionalDetail = $AdditionalDetails -join ", "
+	Write-Progress -Activity $ProgressActivity -Completed
 
-	#Determine MFA status
-	[array]$MFAMethods = ("Fido2", "PhoneAuthentication", "PasswordlessMSAuthenticator", "AuthenticatorApp", "WindowsHelloForBusiness", "SoftwareOath")
-	foreach ($MFAMethod in $MFAMethods) { if ($AuthenticationMethod -contains $MFAMethod) { $MFAStatus = "Enabled"; break } }
-
-	# build result object
-	$userHash = $null
-	$userHash = @{
-		'UserPrincipalName'      = $MGUser.userPrincipalName
-		'DisplayName'            = $MGUser.DisplayName
-		'Sign-In'                = $MGUserEnabled
-		'Synced'                 = $MGUser.OnPremisesSyncEnabled
-		'Department'             = $MGUser.Department
-		'Title'                  = $MGUser.JobTitle
-		'PasswordAge'            = $MGUserPasswordAge
-		'Licenses'               = $MGUserLicenseProductNames
-		'Roles'                  = $MGUserRoles
-		'Manager'                = $MGUserManager
-		#        'AuthMethods'        = $AuthenticationMethods
-		'MFA_Status'             = $MFAStatus
-		'MFA_Phone'              = $MFAPhone
-		'MS_Authenticator'       = $MicrosoftAuthenticatorDevice
-		'3P_Authenticator'       = $Is3rdPartyAuthenticatorUsed
-		'MFA_Additional_Details' = $AdditionalDetail
-	}
-	$userObject = $null
-	$userObject = New-Object PSObject -Property $userHash
-	$365UserReportObject += $userObject
-}
-Write-Progress -Activity $ProgressActivity -Completed
-
-$ProgressActivity = "Building Excel report."
-$ProgressOperation = "Exporting to Excel."
-Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Synced, Department, Title, PasswordAge, Licenses, Roles, Manager, MFA_Status, MFA_Phone, MS_Authenticator, 3P_Authenticator, MFA_Additional_Details | Sort-Object -Property UserPrincipalName | Export-Excel `
-	-Path $XLSreport `
-	-WorkSheetname "365 Users" `
-	-ClearSheet `
-	-BoldTopRow `
-	-Autosize `
-	-FreezePane 2 `
-	-Autofilter `
-	-ConditionalText $(
-	New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink
-	New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink
-	New-ConditionalText "Global Administrator" -BackgroundColor Yellow
-)
-Write-Progress -Activity $ProgressActivity -Completed
+	$ProgressActivity = "Building Excel report."
+	$ProgressOperation = "Exporting to Excel."
+	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+	$365UserReportObject | Select-Object UserPrincipalName, DisplayName, Sign-In, Synced, Department, Title, PasswordAge, Licenses, Roles, Manager, MFA_Status, MFA_Phone, MS_Authenticator, 3P_Authenticator, MFA_Additional_Details | Sort-Object -Property UserPrincipalName | Export-Excel `
+		-Path $XLSreport `
+		-WorkSheetname "365 Users" `
+		-ClearSheet `
+		-BoldTopRow `
+		-Autosize `
+		-FreezePane 2 `
+		-Autofilter `
+		-ConditionalText $(
+		New-ConditionalText "blocked" -ConditionalTextColor DarkRed -BackgroundColor LightPink
+		New-ConditionalText "Never Signed In" -ConditionalTextColor DarkRed -BackgroundColor LightPink
+		New-ConditionalText "Global Administrator" -BackgroundColor Yellow
+	)
+	Write-Progress -Activity $ProgressActivity -Completed
 }
 
 #check whether mailbox report skip is set by parameter
@@ -382,9 +403,10 @@ If ($SkipMailboxReport) { Write-Verbose "Skipping mailbox report." } else {
 }
 
 If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
+	$Step = "365 Group Memberships"
 	# get 365 group report
-	$ProgressActivity = "Retrieving group data."
-	$ProgressOperation = "Retrieving group list."
+	$ProgressActivity = "Processing $Step."
+	$ProgressOperation = "Retrieving data."
 	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 
 	$MGGroupList = Get-MgGroup -all
@@ -403,8 +425,8 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 		$ProgressPercent = ($GroupProgressBarCounter / $($MGGroupList).count) * 100
 		Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete $ProgressPercent
 		$GroupOwner = Get-MgGroupOwner -GroupID $MGGroup.Id | Select-Object -ExpandProperty Id
-		if ($null -eq $GroupOwner) {$GroupOwnerUPN = "not set"} else {
-			try {$GroupOwnerUPN = Get-MgUser -UserID $GroupOwner | Select-Object -ExpandProperty UserPrincipalName } catch { $GroupOwnerUPN = "other" }
+		if ($null -eq $GroupOwner) { $GroupOwnerUPN = "not set" } else {
+			try { $GroupOwnerUPN = Get-MgUser -UserID $GroupOwner | Select-Object -ExpandProperty UserPrincipalName } catch { $GroupOwnerUPN = "other" }
 		}
 		$GroupSynced = $MGGroup.OnPremisesSyncEnabled
 		$GroupDescription = $MGGroup.Description
@@ -422,52 +444,43 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	}
 	Write-Progress -Activity $ProgressActivity -Completed
 
-	$ProgressActivity = "Building Excel report."
-	$ProgressOperation = "Exporting to Excel."
-	Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-	$365GroupReportObject | Select-Object GroupName, GroupOwner, ADSynced, Description, MemberName, MemberUPN, MemberEmail | Sort-Object -Property GroupName | Export-Excel `
-		-Path $XLSreport `
-		-WorkSheetname "365 Group Memberships" `
-		-ClearSheet `
-		-BoldTopRow `
-		-Autosize `
-		-FreezePane 2 `
-		-Autofilter
-	Write-Progress -Activity $ProgressActivity -Completed
+New-Report -ReportName $Step -ReportData $365GroupReportObject -ReportOutput $XLSreport
 }
 
 #get audit log settings
 $Step = "Exchange Online Audit Log"
-$ProgressActivity = "Retrieving $Step data."
-$ProgressOperation = "Retrieving $Step list."
+$ProgressActivity = "Processing $Step. This may take a while."
+$ProgressOperation = "Retrieving data."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 $EOAuditLogConfig = Get-AdminAuditLogConfig | Select-Object -Property UnifiedAuditLogIngestionEnabled, AdminAuditLogAgeLimit
-$EOAuditLogConfig | Export-Excel `
-		-Path $XLSreport `
-		-WorkSheetname "$Step" `
-		-ClearSheet `
-		-BoldTopRow `
-		-Autosize `
-		-FreezePane 2 `
-		-Autofilter
-Write-Progress -Activity $ProgressActivity -Completed
+New-Report -ReportName $Step -ReportData $EOAuditLogConfig -ReportOutput $XLSreport
 
 #get transport rules (check for external banner)
 $Step = "Exchange Online Transport Rules"
-$ProgressActivity = "Retrieving $Step data."
-$ProgressOperation = "Retrieving $Step list."
+$ProgressActivity = "Processing $Step. This may take a while."
+$ProgressOperation = "Retrieving data."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$EOTransportRules = Get-TransportRule | Select-Object -Property Name, State, Priority, Description | Sort-Object -Property Priority
-$EOTransportRules | Export-Excel `
-		-Path $XLSreport `
-		-WorkSheetname "$Step" `
-		-ClearSheet `
-		-BoldTopRow `
-		-Autosize `
-		-FreezePane 2 `
-		-Autofilter
-Write-Progress -Activity $ProgressActivity -Completed
+[array]$EOTransportRules = Get-TransportRule | Select-Object -Property Name, State, Priority, Description | Sort-Object -Property Priority
+New-Report -ReportName $Step -ReportData $EOTransportRules -ReportOutput $XLSreport
 
+#get SPF records
+$Step = "SPF and DMARC Records"
+$ProgressActivity = "Processing $Step. This may take a while."
+$ProgressOperation = "Retrieving data."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$DeliverabilityRecords = Get-MgDomain | ForEach-Object {
+	$ErrorActionPreference = 'Stop'
+	try { $SPF = Resolve-DnsName $($_.Id) -Type TXT | Where-Object { $_.Strings -match "v=spf1" } | Select-Object -ExpandProperty Strings } catch { $SPF = "error" }
+	try { $DMARC = Resolve-DnsName _dmarc.$($_.Id) -Type TXT | Select-Object -ExpandProperty Strings } catch { $DMARC = "error" }
+	[pscustomobject]@{
+		Domain    = $_.Id
+		IsDefault = $_.IsDefault
+		IsInitial = $_.IsInitial
+		SPF       = $SPF
+		DMARC     = $DMARC
+	}
+}
+New-Report -ReportName $Step -ReportData $DeliverabilityRecords -ReportOutput $XLSreport
 
 #Clean up session
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
