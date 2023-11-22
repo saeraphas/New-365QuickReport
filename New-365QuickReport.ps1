@@ -463,7 +463,7 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 [array]$EOTransportRules = Get-TransportRule | Select-Object -Property Name, State, Priority, Description | Sort-Object -Property Priority
 New-Report -ReportName $Step -ReportData $EOTransportRules -ReportOutput $XLSreport
 
-#get SPF records
+#get mail deliverability records
 $Step = "SPF and DMARC Records"
 $ProgressActivity = "Processing $Step. This may take a while."
 $ProgressOperation = "Retrieving data."
