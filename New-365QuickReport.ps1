@@ -96,7 +96,7 @@ try { Connect-ExchangeOnline -ExchangeEnvironmentName $ExchangeEnvironmentName -
 
 $ProgressOperation = "2 of 2 - Connecting to Microsoft Graph."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation -PercentComplete 50
-$Scopes = "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All"
+$Scopes = "Domain.Read.All,User.Read.All,UserAuthenticationMethod.Read.All,RoleManagement.Read.Directory,Group.Read.All,GroupMember.Read.All,OrgContact.Read.All,Device.Read.All"
 If ($GCCHigh) { $MSGraphEnvironmentName = "USGovDoD" } else { $MSGraphEnvironmentName = "Global" }
 try { Connect-MgGraph -Environment $MSGraphEnvironmentName -Scopes $Scopes | Out-Null } catch { write-error "Not connected to MS Graph. Exiting."; exit }
 Write-Progress -Activity $ProgressActivity -Completed
@@ -444,7 +444,7 @@ If ($SkipGroupReport) { Write-Verbose "Skipping group report." } else {
 	}
 	Write-Progress -Activity $ProgressActivity -Completed
 
-New-Report -ReportName $Step -ReportData $365GroupReportObject -ReportOutput $XLSreport
+	New-Report -ReportName $Step -ReportData $365GroupReportObject -ReportOutput $XLSreport
 }
 
 #get audit log settings
@@ -464,23 +464,33 @@ Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 New-Report -ReportName $Step -ReportData $EOTransportRules -ReportOutput $XLSreport
 
 #get mail deliverability records
-$Step = "SPF and DMARC Records"
+$Step = "Mail DNS Records"
 $ProgressActivity = "Processing $Step. This may take a while."
 $ProgressOperation = "Retrieving data."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
 $DeliverabilityRecords = Get-MgDomain | ForEach-Object {
 	$ErrorActionPreference = 'Stop'
+	try { $MX = $(Resolve-DnsName $($_.Id) -Type MX | Select-Object -ExpandProperty NameExchange) -Join "," } catch { $MX = "error" }
 	try { $SPF = Resolve-DnsName $($_.Id) -Type TXT | Where-Object { $_.Strings -match "v=spf1" } | Select-Object -ExpandProperty Strings } catch { $SPF = "error" }
 	try { $DMARC = Resolve-DnsName _dmarc.$($_.Id) -Type TXT | Select-Object -ExpandProperty Strings } catch { $DMARC = "error" }
 	[pscustomobject]@{
 		Domain    = $_.Id
 		IsDefault = $_.IsDefault
 		IsInitial = $_.IsInitial
+		MX        = $MX
 		SPF       = $SPF
 		DMARC     = $DMARC
 	}
 }
 New-Report -ReportName $Step -ReportData $DeliverabilityRecords -ReportOutput $XLSreport
+
+#get Entra devices
+$Step = "Entra Devices"
+$ProgressActivity = "Processing $Step. This may take a while."
+$ProgressOperation = "Retrieving data."
+Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
+$EntraDevices = Get-MgDevice -All -Select "displayName,deviceId,operatingsystem,operatingsystemversion,approximatelastsignindatetime" | Select-Object -Property DisplayName,DeviceID,OperatingSystem,OperatingSystemVersion,ApproximateLastSignInDateTime | Sort-Object -Property ApproximateLastSignInDateTime -Descending
+New-Report -ReportName $Step -ReportData $EntraDevices -ReportOutput $XLSreport
 
 #Clean up session
 Disconnect-ExchangeOnline -Confirm:$false | Out-Null
