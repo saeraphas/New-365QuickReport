@@ -473,6 +473,11 @@ $DeliverabilityRecords = Get-MgDomain | ForEach-Object {
 	try { $MX = $(Resolve-DnsName $($_.Id) -Type MX | Select-Object -ExpandProperty NameExchange) -Join "," } catch { $MX = "error" }
 	try { $SPF = Resolve-DnsName $($_.Id) -Type TXT | Where-Object { $_.Strings -match "v=spf1" } | Select-Object -ExpandProperty Strings } catch { $SPF = "error" }
 	try { $DMARC = Resolve-DnsName _dmarc.$($_.Id) -Type TXT | Select-Object -ExpandProperty Strings } catch { $DMARC = "error" }
+	try { $DKIM1 = Resolve-DnsName selector1._domainkey.$($_.Id) -Type CNAME | Select-Object -ExpandProperty NameHost } catch { $DKIM1 = "error" }
+	try { $DKIM2 = Resolve-DnsName selector2._domainkey.$($_.Id) -Type CNAME | Select-Object -ExpandProperty NameHost } catch { $DKIM2 = "error" }
+	try { $DKIMRecords = Get-DkimSigningConfig -Identity $($_.Id) | Select-Object Selector1CNAME, Selector2CNAME } catch { Write-Warning "No DKIM signing config for $($_.Id)."}
+	if ($DKIM1 -eq $($DKIMRecords.Selector1CNAME)) { $DKIM1 = "OK" }
+	if ($DKIM2 -eq $($DKIMRecords.Selector2CNAME)) { $DKIM2 = "OK" }
 	[pscustomobject]@{
 		Domain    = $_.Id
 		IsDefault = $_.IsDefault
@@ -480,6 +485,8 @@ $DeliverabilityRecords = Get-MgDomain | ForEach-Object {
 		MX        = $MX
 		SPF       = $SPF
 		DMARC     = $DMARC
+		DKIM1     = $DKIM1
+		DKIM2     = $DKIM2
 	}
 }
 New-Report -ReportName $Step -ReportData $DeliverabilityRecords -ReportOutput $XLSreport
@@ -489,7 +496,7 @@ $Step = "Entra Devices"
 $ProgressActivity = "Processing $Step. This may take a while."
 $ProgressOperation = "Retrieving data."
 Write-Progress -Activity $ProgressActivity -CurrentOperation $ProgressOperation
-$EntraDevices = Get-MgDevice -All -Select "displayName,deviceId,operatingsystem,operatingsystemversion,approximatelastsignindatetime" | Select-Object -Property DisplayName,DeviceID,OperatingSystem,OperatingSystemVersion,ApproximateLastSignInDateTime | Sort-Object -Property ApproximateLastSignInDateTime -Descending
+$EntraDevices = Get-MgDevice -All -Select "displayName,deviceId,operatingsystem,operatingsystemversion,approximatelastsignindatetime" | Select-Object -Property DisplayName, DeviceID, OperatingSystem, OperatingSystemVersion, ApproximateLastSignInDateTime | Sort-Object -Property ApproximateLastSignInDateTime -Descending
 New-Report -ReportName $Step -ReportData $EntraDevices -ReportOutput $XLSreport
 
 #Clean up session
