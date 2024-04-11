@@ -23,7 +23,8 @@ Param (
 	[switch] $SkipMailboxReport,
 	[switch] $SkipGroupReport,
 	[switch] $SkipSKUConversion,
-	[switch] $GCCHigh
+	[switch] $GCCHigh,
+	[switch] $ClearMGTokenCache
 )
 
 $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -31,6 +32,15 @@ $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 #check for Fortinet EDR since it breaks everything useful
 $FortinetEDRPresent = Get-Service -Name "FortiEDR Collector Service" -ErrorAction SilentlyContinue
 if ($FortinetEDRPresent) { Write-Warning "Fortinet EDR service present on this machine. Network connections may be blocked." }
+
+#remove cached mggraph tokens to address auth prompts for every query
+#https://github.com/microsoftgraph/msgraph-sdk-powershell#known-issues
+if ($ClearMGTokenCache) {
+	Disconnect-MgGraph | Out-Null
+	Remove-Item "$env:USERPROFILE\.mg" -Recurse -Force
+	Write-Warning "User profile Graph SDK token cache reset. This script will now exit."
+	exit
+}
 
 function CheckPrerequisites($PrerequisiteModulesTable) {
 	$PrerequisiteModules = $PrerequisiteModulesTable | ConvertFrom-Csv
@@ -479,7 +489,7 @@ $DeliverabilityRecords = Get-MgDomain | ForEach-Object {
 	try { $DMARC = Resolve-DnsName _dmarc.$($_.Id) -Type TXT | Select-Object -ExpandProperty Strings } catch { $DMARC = "error" }
 	try { $DKIM1 = Resolve-DnsName selector1._domainkey.$($_.Id) -Type CNAME | Select-Object -ExpandProperty NameHost } catch { $DKIM1 = "error" }
 	try { $DKIM2 = Resolve-DnsName selector2._domainkey.$($_.Id) -Type CNAME | Select-Object -ExpandProperty NameHost } catch { $DKIM2 = "error" }
-	try { $DKIMRecords = Get-DkimSigningConfig -Identity $($_.Id) | Select-Object Selector1CNAME, Selector2CNAME } catch { Write-Warning "No DKIM signing config for $($_.Id)."}
+	try { $DKIMRecords = Get-DkimSigningConfig -Identity $($_.Id) | Select-Object Selector1CNAME, Selector2CNAME } catch { Write-Warning "No DKIM signing config for $($_.Id)." }
 	if ($DKIM1 -eq $($DKIMRecords.Selector1CNAME)) { $DKIM1 = "OK" }
 	if ($DKIM2 -eq $($DKIMRecords.Selector2CNAME)) { $DKIM2 = "OK" }
 	[pscustomobject]@{
