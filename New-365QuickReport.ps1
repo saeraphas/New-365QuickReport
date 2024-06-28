@@ -16,6 +16,8 @@
 						If we meet some day, and you think this stuff is worth it, you can buy me a beer in return.
 #>
 
+#Requires -Version 7.0
+
 Param (
 	[Parameter(ValueFromPipelineByPropertyName)]
 	[switch] $SkipUpdateCheck,
